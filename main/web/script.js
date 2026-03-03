@@ -7,7 +7,7 @@ class LanguageManager {
         this.currentLanguage = localStorage.getItem('language') || 'zh';
         this.translations = {
             zh: {
-                title: 'DualKey 控制面板 v0.5',
+                title: 'DualKey 控制面板 v0.6',
                 connectionStatus: '连接状态:',
                 lastUpdate: '最后更新:',
                 online: '在线',
@@ -88,6 +88,14 @@ class LanguageManager {
                 apply: '应用',
                 enabled: '已启用',
                 disabled: '已禁用',
+                // 自定义映射
+                presetMapping: '预设组合',
+                customKeyMapping: '自定义按键',
+                customTextMapping: '自定义文本',
+                customTextNoticeText: '仅支持 ASCII 可打印字符，暂不支持中文等需编码文字',
+                leftKeyText: '左键文本:',
+                rightKeyText: '右键文本:',
+                noKey: '-- 无 --',
                 // HID功能选项
                 noFunction: '无功能',
                 copy: '复制',
@@ -195,7 +203,7 @@ class LanguageManager {
                 pairingTip: '目前仅支持旧主机删除连接后才能与新设备配对',
             },
             en: {
-                title: 'DualKey Control Panel v0.5',
+                title: 'DualKey Control Panel v0.6',
                 connectionStatus: 'Connection Status:',
                 lastUpdate: 'Last Update:',
                 online: 'Online',
@@ -276,6 +284,14 @@ class LanguageManager {
                 apply: 'Apply',
                 enabled: 'Enabled',
                 disabled: 'Disabled',
+                // Custom mapping
+                presetMapping: 'Preset Combination',
+                customKeyMapping: 'Custom Key',
+                customTextMapping: 'Custom Text',
+                customTextNoticeText: 'Only ASCII printable characters are supported. Chinese and other encoded characters are not supported.',
+                leftKeyText: 'Left Key Text:',
+                rightKeyText: 'Right Key Text:',
+                noKey: '-- None --',
                 // HID功能选项
                 noFunction: 'No Function',
                 copy: 'Copy',
@@ -453,14 +469,18 @@ class LanguageManager {
                 'wifiConfigPassword': '输入WiFi密码',
                 'wifiStaticIP': '192.168.1.100',
                 'wifiStaticNetmask': '255.255.255.0',
-                'wifiStaticGateway': '192.168.1.1'
+                'wifiStaticGateway': '192.168.1.1',
+                'leftKeyText': '按下左键时输出的文本...',
+                'rightKeyText': '按下右键时输出的文本...'
             },
             en: {
                 'wifiConfigSSID': 'Enter WiFi Name',
                 'wifiConfigPassword': 'Enter WiFi Password',
                 'wifiStaticIP': '192.168.1.100',
                 'wifiStaticNetmask': '255.255.255.0',
-                'wifiStaticGateway': '192.168.1.1'
+                'wifiStaticGateway': '192.168.1.1',
+                'leftKeyText': 'Text to type when left key is pressed...',
+                'rightKeyText': 'Text to type when right key is pressed...'
             }
         };
 
@@ -504,8 +524,61 @@ class DualKeyController {
             currentKeyMapping: 9,
             bluetoothPairingStatus: 0,
             usbMappingEnabled: true,
-            bleMappingEnabled: true
+            bleMappingEnabled: true,
+            customMappingEnabled: false,
+            customLeftAction: { action_type: 0, modifier: 0, keycode: 0x4B, text: '' },
+            customRightAction: { action_type: 0, modifier: 0, keycode: 0x4E, text: '' }
         };
+
+        // 当前映射标签: 'preset' | 'customKey' | 'customText'
+        this.currentMappingTab = 'preset';
+
+        // HID 键码选项（key: HID usage ID, label: 显示名称）
+        this.keyCodeOptions = [
+            { value: 0,   label: '-- None --' },
+            // 字母
+            { value: 4,   label: 'A' }, { value: 5,   label: 'B' }, { value: 6,   label: 'C' },
+            { value: 7,   label: 'D' }, { value: 8,   label: 'E' }, { value: 9,   label: 'F' },
+            { value: 10,  label: 'G' }, { value: 11,  label: 'H' }, { value: 12,  label: 'I' },
+            { value: 13,  label: 'J' }, { value: 14,  label: 'K' }, { value: 15,  label: 'L' },
+            { value: 16,  label: 'M' }, { value: 17,  label: 'N' }, { value: 18,  label: 'O' },
+            { value: 19,  label: 'P' }, { value: 20,  label: 'Q' }, { value: 21,  label: 'R' },
+            { value: 22,  label: 'S' }, { value: 23,  label: 'T' }, { value: 24,  label: 'U' },
+            { value: 25,  label: 'V' }, { value: 26,  label: 'W' }, { value: 27,  label: 'X' },
+            { value: 28,  label: 'Y' }, { value: 29,  label: 'Z' },
+            // 数字
+            { value: 39,  label: '0' }, { value: 30,  label: '1' }, { value: 31,  label: '2' },
+            { value: 32,  label: '3' }, { value: 33,  label: '4' }, { value: 34,  label: '5' },
+            { value: 35,  label: '6' }, { value: 36,  label: '7' }, { value: 37,  label: '8' },
+            { value: 38,  label: '9' },
+            // F 键
+            { value: 58,  label: 'F1'  }, { value: 59,  label: 'F2'  }, { value: 60,  label: 'F3'  },
+            { value: 61,  label: 'F4'  }, { value: 62,  label: 'F5'  }, { value: 63,  label: 'F6'  },
+            { value: 64,  label: 'F7'  }, { value: 65,  label: 'F8'  }, { value: 66,  label: 'F9'  },
+            { value: 67,  label: 'F10' }, { value: 68,  label: 'F11' }, { value: 69,  label: 'F12' },
+            // 特殊键
+            { value: 40,  label: 'Enter'       },
+            { value: 41,  label: 'Escape'      },
+            { value: 42,  label: 'Backspace'   },
+            { value: 43,  label: 'Tab'         },
+            { value: 44,  label: 'Space'       },
+            { value: 76,  label: 'Delete'      },
+            { value: 73,  label: 'Insert'      },
+            { value: 57,  label: 'Caps Lock'   },
+            // 导航键
+            { value: 74,  label: 'Home'        },
+            { value: 77,  label: 'End'         },
+            { value: 75,  label: 'Page Up'     },
+            { value: 78,  label: 'Page Down'   },
+            { value: 82,  label: '↑ Up'        },
+            { value: 81,  label: '↓ Down'      },
+            { value: 80,  label: '← Left'      },
+            { value: 79,  label: '→ Right'     },
+            // 其他
+            { value: 70,  label: 'Print Screen' },
+            { value: 71,  label: 'Scroll Lock'  },
+            { value: 72,  label: 'Pause'         },
+        ];
         
         this.init();
         
@@ -1858,6 +1931,10 @@ class DualKeyController {
             // 按键映射开关状态
             usbMappingEnabled: true,
             bleMappingEnabled: true,
+            // 自定义映射状态
+            customMappingEnabled: false,
+            customLeftAction:  { action_type: 0, modifier: 0, keycode: 0x4B, text: '' },
+            customRightAction: { action_type: 0, modifier: 0, keycode: 0x4E, text: '' },
             // WIFI状态
             wifiSSID: "",
             wifiIP: "",
@@ -1995,7 +2072,18 @@ class DualKeyController {
                 if (data.dualkey.ble_mapping_enabled !== undefined) {
                     this.dualkeyState.bleMappingEnabled = data.dualkey.ble_mapping_enabled;
                 }
-                
+
+                // 更新自定义映射状态
+                if (data.dualkey.custom_mapping_enabled !== undefined) {
+                    this.dualkeyState.customMappingEnabled = data.dualkey.custom_mapping_enabled;
+                }
+                if (data.dualkey.custom_left_action !== undefined) {
+                    this.dualkeyState.customLeftAction = data.dualkey.custom_left_action;
+                }
+                if (data.dualkey.custom_right_action !== undefined) {
+                    this.dualkeyState.customRightAction = data.dualkey.custom_right_action;
+                }
+
                 // 更新WIFI状态
                 if (data.dualkey.wifi_ssid !== undefined) {
                     this.dualkeyState.wifiSSID = data.dualkey.wifi_ssid;
@@ -2254,26 +2342,55 @@ class DualKeyController {
     // HID按键映射控制
     setupHIDMappingControls() {
         const hidMappingSelect = document.getElementById('hidMappingSelect');
-        const applyMappingBtn = document.getElementById('applyMappingBtn');
+        const applyMappingBtn  = document.getElementById('applyMappingBtn');
         const usbMappingSwitch = document.getElementById('usbMappingSwitch');
         const bleMappingSwitch = document.getElementById('bleMappingSwitch');
-        
-        if (hidMappingSelect) {
-            // 初始化选择器的值
-            hidMappingSelect.value = this.dualkeyState.currentKeyMapping;
-            
-            hidMappingSelect.addEventListener('change', () => {
-                // console.log('HID映射选择变更:', hidMappingSelect.value);
-                // 可以选择立即应用或等待用户点击应用按钮
-                // this.applyHIDMapping(parseInt(hidMappingSelect.value));
+
+        // ---- 动态填充键码下拉选项 ----
+        ['leftKeyCodeSelect', 'rightKeyCodeSelect'].forEach(id => {
+            const sel = document.getElementById(id);
+            if (!sel) return;
+            sel.innerHTML = '';
+            this.keyCodeOptions.forEach(opt => {
+                const el = document.createElement('option');
+                el.value       = opt.value;
+                el.textContent = opt.label;
+                sel.appendChild(el);
             });
+        });
+
+        // ---- 映射类型标签切换 ----
+        ['tabPresetMapping', 'tabCustomKeyMapping', 'tabCustomTextMapping'].forEach(id => {
+            const btn = document.getElementById(id);
+            if (!btn) return;
+            btn.addEventListener('click', () => {
+                this.switchMappingTab(btn.dataset.tab);
+            });
+        });
+
+        // ---- 预设映射 ----
+        if (hidMappingSelect) {
+            hidMappingSelect.value = this.dualkeyState.currentKeyMapping;
         }
-        
         if (applyMappingBtn) {
             applyMappingBtn.addEventListener('click', () => {
-                const selectedMapping = parseInt(hidMappingSelect.value);
-                // console.log('应用HID按键映射:', selectedMapping);
-                this.applyHIDMapping(selectedMapping);
+                this.applyHIDMapping(parseInt(hidMappingSelect.value));
+            });
+        }
+
+        // ---- 自定义按键：应用 ----
+        const applyCustomKeyBtn = document.getElementById('applyCustomKeyBtn');
+        if (applyCustomKeyBtn) {
+            applyCustomKeyBtn.addEventListener('click', () => {
+                this.applyCustomKeyMapping();
+            });
+        }
+
+        // ---- 自定义文本：应用 ----
+        const applyCustomTextBtn = document.getElementById('applyCustomTextBtn');
+        if (applyCustomTextBtn) {
+            applyCustomTextBtn.addEventListener('click', () => {
+                this.applyCustomTextMapping();
             });
         }
 
@@ -2281,7 +2398,6 @@ class DualKeyController {
         if (usbMappingSwitch) {
             usbMappingSwitch.checked = this.dualkeyState.usbMappingEnabled;
             usbMappingSwitch.addEventListener('change', () => {
-                // console.log('USB映射开关变更:', usbMappingSwitch.checked);
                 this.setKeyMappingSwitch('usb', usbMappingSwitch.checked);
             });
         }
@@ -2290,10 +2406,161 @@ class DualKeyController {
         if (bleMappingSwitch) {
             bleMappingSwitch.checked = this.dualkeyState.bleMappingEnabled;
             bleMappingSwitch.addEventListener('change', () => {
-                // console.log('蓝牙映射开关变更:', bleMappingSwitch.checked);
                 this.setKeyMappingSwitch('ble', bleMappingSwitch.checked);
             });
         }
+    }
+
+    // 切换映射标签
+    switchMappingTab(tab) {
+        this.currentMappingTab = tab;
+
+        // 更新标签按钮状态
+        ['tabPresetMapping', 'tabCustomKeyMapping', 'tabCustomTextMapping'].forEach(id => {
+            const btn = document.getElementById(id);
+            if (btn) btn.classList.toggle('active', btn.dataset.tab === tab);
+        });
+
+        // 显示/隐藏对应面板
+        const panels = {
+            preset:    'panelPresetMapping',
+            customKey: 'panelCustomKeyMapping',
+            customText:'panelCustomTextMapping',
+        };
+        Object.entries(panels).forEach(([key, panelId]) => {
+            const el = document.getElementById(panelId);
+            if (el) el.classList.toggle('hidden', key !== tab);
+        });
+    }
+
+    // 应用自定义按键 / 组合键
+    applyCustomKeyMapping() {
+        const getModifier = (idCtrl, idShift, idAlt, idGui) => {
+            let mod = 0;
+            if (document.getElementById(idCtrl)  ?.checked) mod |= 0x01;
+            if (document.getElementById(idShift) ?.checked) mod |= 0x02;
+            if (document.getElementById(idAlt)   ?.checked) mod |= 0x04;
+            if (document.getElementById(idGui)   ?.checked) mod |= 0x08;
+            return mod;
+        };
+        const leftMod  = getModifier('leftModCtrl',  'leftModShift',  'leftModAlt',  'leftModGui');
+        const rightMod = getModifier('rightModCtrl', 'rightModShift', 'rightModAlt', 'rightModGui');
+        const leftKc   = parseInt(document.getElementById('leftKeyCodeSelect') ?.value  || '0');
+        const rightKc  = parseInt(document.getElementById('rightKeyCodeSelect')?.value || '0');
+
+        const leftAction  = { action_type: 0, modifier: leftMod,  keycode: leftKc,  text: '' };
+        const rightAction = { action_type: 0, modifier: rightMod, keycode: rightKc, text: '' };
+
+        this.sendMessage({
+            type: 'set_custom_mapping',
+            enabled: true,
+            left_key:  leftAction,
+            right_key: rightAction,
+        });
+
+        // 同步本地状态
+        this.dualkeyState.customMappingEnabled = true;
+        this.dualkeyState.customLeftAction     = leftAction;
+        this.dualkeyState.customRightAction    = rightAction;
+        this.hidStatusCache.customMappingEnabled = true;
+        this.hidStatusCache.customLeftAction     = leftAction;
+        this.hidStatusCache.customRightAction    = rightAction;
+
+        this.updateMappingStatusDisplay();
+
+        const btn = document.getElementById('applyCustomKeyBtn');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = languageManager.getText('applying');
+            setTimeout(() => { btn.disabled = false; btn.textContent = languageManager.getText('apply'); }, 2000);
+        }
+    }
+
+    // 应用自定义文本
+    applyCustomTextMapping() {
+        const leftText  = (document.getElementById('leftKeyText') ?.value  || '').substring(0, 63);
+        const rightText = (document.getElementById('rightKeyText')?.value || '').substring(0, 63);
+
+        const leftAction  = { action_type: 1, modifier: 0, keycode: 0, text: leftText };
+        const rightAction = { action_type: 1, modifier: 0, keycode: 0, text: rightText };
+
+        this.sendMessage({
+            type: 'set_custom_mapping',
+            enabled: true,
+            left_key:  leftAction,
+            right_key: rightAction,
+        });
+
+        // 同步本地状态
+        this.dualkeyState.customMappingEnabled = true;
+        this.dualkeyState.customLeftAction     = leftAction;
+        this.dualkeyState.customRightAction    = rightAction;
+        this.hidStatusCache.customMappingEnabled = true;
+        this.hidStatusCache.customLeftAction     = leftAction;
+        this.hidStatusCache.customRightAction    = rightAction;
+
+        this.updateMappingStatusDisplay();
+
+        const btn = document.getElementById('applyCustomTextBtn');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = languageManager.getText('applying');
+            setTimeout(() => { btn.disabled = false; btn.textContent = languageManager.getText('apply'); }, 2000);
+        }
+    }
+
+    // 从设备状态恢复自定义映射UI（设备重连后同步）
+    restoreCustomMappingUI(dualkey) {
+        if (!dualkey) return;
+
+        const customEnabled = dualkey.custom_mapping_enabled;
+        const leftAction    = dualkey.custom_left_action;
+        const rightAction   = dualkey.custom_right_action;
+
+        if (customEnabled === undefined) return;
+
+        this.hidStatusCache.customMappingEnabled = customEnabled;
+
+        if (!customEnabled) {
+            // 自定义映射未启用：切回预设标签
+            if (this.currentMappingTab !== 'preset') {
+                this.switchMappingTab('preset');
+            }
+            this.updateMappingStatusDisplay();
+            return;
+        }
+
+        if (leftAction && rightAction) {
+            const actionType = leftAction.action_type;
+            const tab = actionType === 1 ? 'customText' : 'customKey';
+
+            // 只在当前仍是预设标签时才自动切换，避免覆盖用户正在操作的状态
+            if (this.currentMappingTab === 'preset') {
+                this.switchMappingTab(tab);
+            }
+
+            if (actionType === 0) {
+                // 恢复按键 / 组合键设置
+                const restoreKey = (idCtrl, idShift, idAlt, idGui, idSel, action) => {
+                    const el = (id) => document.getElementById(id);
+                    if (el(idCtrl))  el(idCtrl).checked  = !!(action.modifier & 0x01);
+                    if (el(idShift)) el(idShift).checked = !!(action.modifier & 0x02);
+                    if (el(idAlt))   el(idAlt).checked   = !!(action.modifier & 0x04);
+                    if (el(idGui))   el(idGui).checked   = !!(action.modifier & 0x08);
+                    if (el(idSel))   el(idSel).value     = action.keycode;
+                };
+                restoreKey('leftModCtrl',  'leftModShift',  'leftModAlt',  'leftModGui',  'leftKeyCodeSelect',  leftAction);
+                restoreKey('rightModCtrl', 'rightModShift', 'rightModAlt', 'rightModGui', 'rightKeyCodeSelect', rightAction);
+            } else {
+                // 恢复文本设置
+                const lt = document.getElementById('leftKeyText');
+                const rt = document.getElementById('rightKeyText');
+                if (lt) lt.value = leftAction.text  || '';
+                if (rt) rt.value = rightAction.text || '';
+            }
+        }
+
+        this.updateMappingStatusDisplay();
     }
 
     // 蓝牙控制
@@ -2443,18 +2710,28 @@ class DualKeyController {
 
     // 应用HID按键映射
     applyHIDMapping(mappingIndex) {
-        // console.log(`应用HID按键映射: ${mappingIndex}`);
-        
-        // 发送到后端
+        // 发送预设映射索引
         this.sendMessage({
             type: 'set_hid_mapping',
             mapping_index: mappingIndex
         });
-        
-        // 更新本地状态
-        this.dualkeyState.currentKeyMapping = mappingIndex;
-        
-        // 禁用按钮一段时间防止重复点击
+
+        // 同时禁用自定义映射，确保预设模式真正生效
+        // 不传 left_key/right_key，设备端保留现有的自定义动作值，方便用户切回时复用
+        this.sendMessage({
+            type: 'set_custom_mapping',
+            enabled: false,
+        });
+
+        // 同步本地状态
+        this.dualkeyState.currentKeyMapping   = mappingIndex;
+        this.dualkeyState.customMappingEnabled = false;
+        this.hidStatusCache.customMappingEnabled = false;
+
+        // 切换到预设标签并刷新状态显示
+        this.switchMappingTab('preset');
+        this.updateMappingStatusDisplay();
+
         const applyBtn = document.getElementById('applyMappingBtn');
         if (applyBtn) {
             applyBtn.disabled = true;
@@ -2855,59 +3132,113 @@ class DualKeyController {
             this.hidStatusCache.bleMappingEnabled = this.dualkeyState.bleMappingEnabled;
             this.updateMappingStatusDisplay();
         }
+
+        // 自定义映射：从设备状态同步 UI（首次连接 / 重连时恢复）
+        const prevCustomEnabled = this.hidStatusCache.customMappingEnabled;
+        if (this.dualkeyState.customMappingEnabled !== undefined &&
+            prevCustomEnabled !== this.dualkeyState.customMappingEnabled) {
+            this.restoreCustomMappingUI(this.dualkeyState);
+            this.hidStatusCache.customMappingEnabled = this.dualkeyState.customMappingEnabled;
+        }
     }
 
     // 更新映射状态显示
     updateMappingStatusDisplay() {
         const currentMappingName = document.getElementById('currentMappingName');
-        const usbMappingDetail = document.getElementById('usbMappingDetail');
-        const bleMappingDetail = document.getElementById('bleMappingDetail');
+        const usbMappingDetail   = document.getElementById('usbMappingDetail');
+        const bleMappingDetail   = document.getElementById('bleMappingDetail');
 
-        // 映射配置定义
-        const mappingConfigs = [
-            { index: 0, name: languageManager.getText('copyPaste')},
-            { index: 1, name: languageManager.getText('copyPasteCmd')},
-            { index: 2, name: languageManager.getText('undoRedo')},
-            { index: 3, name: languageManager.getText('undoRedoCmd')},
-            { index: 4, name: languageManager.getText('undoRedoCmdShift')},
-            { index: 5, name: languageManager.getText('tabSwitch')},
-            { index: 6, name: languageManager.getText('windowSwitch')},
-            { index: 7, name: languageManager.getText('windowSwitchCmd')},
-            { index: 8, name: languageManager.getText('zoom')},
-            { index: 9, name: languageManager.getText('zoomCmd')},
-            { index: 10, name: languageManager.getText('pageUpDown')},
-            { index: 11, name: languageManager.getText('volumeControl')},
-            { index: 12, name: languageManager.getText('mediaControl')},
-            { index: 13, name: languageManager.getText('mediaControlPlayPause')},
-            { index: 14, name: languageManager.getText('homeEnd')},
-            { index: 15, name: languageManager.getText('upDown')},
-            { index: 16, name: languageManager.getText('leftRight')},
-        ];
+        // 从 keyCodeOptions 中查找键名
+        const getKeyName = (keycode) => {
+            const opt = this.keyCodeOptions.find(o => o.value === keycode);
+            return opt ? opt.label : (keycode ? `0x${keycode.toString(16).toUpperCase()}` : '--');
+        };
 
-        const currentConfig = mappingConfigs[this.dualkeyState.currentKeyMapping] || mappingConfigs[10];
+        // 将修饰键掩码转为可读字符串
+        const getModStr = (modifier) => {
+            const parts = [];
+            if (modifier & 0x01) parts.push('Ctrl');
+            if (modifier & 0x02) parts.push('Shift');
+            if (modifier & 0x04) parts.push('Alt');
+            if (modifier & 0x08) parts.push('GUI');
+            return parts.join('+');
+        };
 
-        // 更新映射名称
-        if (currentMappingName) {
-            currentMappingName.textContent = currentConfig.name;
-        }
+        if (this.dualkeyState.customMappingEnabled) {
+            const leftAction  = this.dualkeyState.customLeftAction  || {};
+            const rightAction = this.dualkeyState.customRightAction || {};
 
-        // 更新USB模式状态
-        if (usbMappingDetail) {
-            usbMappingDetail.textContent = `USB mode: ${this.dualkeyState.usbMappingEnabled ? languageManager.getText('enabled') : languageManager.getText('disabled')}`;
-            if (this.dualkeyState.usbMappingEnabled) {
-                usbMappingDetail.classList.remove('disabled');
+            if (leftAction.action_type === 1) {
+                // ---- 自定义文本模式 ----
+                if (currentMappingName) {
+                    currentMappingName.textContent = `[${languageManager.getText('customTextMapping')}]`;
+                }
+                const truncate = (str, len) => {
+                    if (!str) return '""';
+                    return str.length > len ? `"${str.substring(0, len)}…"` : `"${str}"`;
+                };
+                if (usbMappingDetail) {
+                    usbMappingDetail.textContent = `L: ${truncate(leftAction.text, 18)}`;
+                    usbMappingDetail.classList.remove('disabled');
+                }
+                if (bleMappingDetail) {
+                    bleMappingDetail.textContent = `R: ${truncate(rightAction.text, 18)}`;
+                    bleMappingDetail.classList.remove('disabled');
+                }
             } else {
-                usbMappingDetail.classList.add('disabled');
+                // ---- 自定义按键模式 ----
+                if (currentMappingName) {
+                    currentMappingName.textContent = `[${languageManager.getText('customKeyMapping')}]`;
+                }
+                const formatKey = (action) => {
+                    const modStr = getModStr(action.modifier || 0);
+                    const keyStr = getKeyName(action.keycode || 0);
+                    return modStr ? `${modStr}+${keyStr}` : keyStr;
+                };
+                if (usbMappingDetail) {
+                    usbMappingDetail.textContent = `L: ${formatKey(leftAction)}`;
+                    usbMappingDetail.classList.remove('disabled');
+                }
+                if (bleMappingDetail) {
+                    bleMappingDetail.textContent = `R: ${formatKey(rightAction)}`;
+                    bleMappingDetail.classList.remove('disabled');
+                }
             }
-        }
+        } else {
+            // ---- 预设映射模式 ----
+            const mappingNames = [
+                languageManager.getText('copyPaste'),
+                languageManager.getText('copyPasteCmd'),
+                languageManager.getText('undoRedo'),
+                languageManager.getText('undoRedoCmd'),
+                languageManager.getText('undoRedoCmdShift'),
+                languageManager.getText('tabSwitch'),
+                languageManager.getText('windowSwitch'),
+                languageManager.getText('windowSwitchCmd'),
+                languageManager.getText('zoom'),
+                languageManager.getText('zoomCmd'),
+                languageManager.getText('pageUpDown'),
+                languageManager.getText('volumeControl'),
+                languageManager.getText('mediaControl'),
+                languageManager.getText('mediaControlPlayPause'),
+                languageManager.getText('homeEnd'),
+                languageManager.getText('upDown'),
+                languageManager.getText('leftRight'),
+            ];
+            const presetName = mappingNames[this.dualkeyState.currentKeyMapping] || mappingNames[10];
+            if (currentMappingName) {
+                currentMappingName.textContent = presetName;
+            }
 
-        // 更新蓝牙模式状态
-        if (bleMappingDetail) {
-            bleMappingDetail.textContent = `BLE mode: ${this.dualkeyState.bleMappingEnabled ? languageManager.getText('enabled') : languageManager.getText('disabled')}`;
-            if (this.dualkeyState.bleMappingEnabled) {
-                bleMappingDetail.classList.remove('disabled');
-            } else {
-                bleMappingDetail.classList.add('disabled');
+            if (usbMappingDetail) {
+                const en = this.dualkeyState.usbMappingEnabled;
+                usbMappingDetail.textContent = `USB: ${en ? languageManager.getText('enabled') : languageManager.getText('disabled')}`;
+                usbMappingDetail.classList.toggle('disabled', !en);
+            }
+            if (bleMappingDetail) {
+                const en = this.dualkeyState.bleMappingEnabled;
+                bleMappingDetail.textContent = `BLE: ${en ? languageManager.getText('enabled') : languageManager.getText('disabled')}`;
+                bleMappingDetail.classList.toggle('disabled', !en);
             }
         }
     }

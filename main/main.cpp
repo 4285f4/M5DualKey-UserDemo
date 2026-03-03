@@ -114,12 +114,15 @@ typedef enum {
 
 // DualKey配置数据结构
 typedef struct {
-    uint32_t left_key_color;   // 左键颜色
-    uint32_t right_key_color;  // 右键颜色
-    int current_key_mapping;   // 当前按键映射索引
-    bool usb_mapping_enabled;  // USB映射开关
-    bool ble_mapping_enabled;  // 蓝牙映射开关
-    uint32_t crc32;            // CRC校验
+    uint32_t left_key_color;                  // 左键颜色
+    uint32_t right_key_color;                 // 右键颜色
+    int current_key_mapping;                  // 当前按键映射索引
+    bool usb_mapping_enabled;                 // USB映射开关
+    bool ble_mapping_enabled;                 // 蓝牙映射开关
+    bool custom_mapping_enabled;              // 自定义映射开关
+    custom_key_action_t custom_left_action;   // 左键自定义动作
+    custom_key_action_t custom_right_action;  // 右键自定义动作
+    uint32_t crc32;                           // CRC校验
 } dualkey_saved_config_t;
 
 // 状态数据结构
@@ -953,6 +956,49 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                             }
                         }
                     }
+                } else if (strcmp(type->valuestring, "set_custom_mapping") == 0) {
+                    // 设置自定义按键映射
+                    cJSON *enabled_json = cJSON_GetObjectItem(json, "enabled");
+                    cJSON *left_key     = cJSON_GetObjectItem(json, "left_key");
+                    cJSON *right_key    = cJSON_GetObjectItem(json, "right_key");
+
+                    if (enabled_json && cJSON_IsBool(enabled_json)) {
+                        bool custom_en = cJSON_IsTrue(enabled_json);
+                        btn_progress_enable_custom_mapping(custom_en);
+                        ESP_LOGI(TAG, "自定义映射: %s", custom_en ? "启用" : "禁用");
+                    }
+
+                    auto parse_key_action = [](cJSON *key_obj, custom_key_action_t *out) {
+                        if (!key_obj || !cJSON_IsObject(key_obj)) return;
+                        memset(out, 0, sizeof(custom_key_action_t));
+                        cJSON *action_type = cJSON_GetObjectItem(key_obj, "action_type");
+                        cJSON *modifier    = cJSON_GetObjectItem(key_obj, "modifier");
+                        cJSON *keycode     = cJSON_GetObjectItem(key_obj, "keycode");
+                        cJSON *text        = cJSON_GetObjectItem(key_obj, "text");
+                        if (action_type && cJSON_IsNumber(action_type))
+                            out->type = (custom_action_type_t)(int)action_type->valueint;
+                        if (modifier && cJSON_IsNumber(modifier))
+                            out->modifier = (uint8_t)modifier->valueint;
+                        if (keycode && cJSON_IsNumber(keycode))
+                            out->keycode = (uint8_t)keycode->valueint;
+                        if (text && cJSON_IsString(text))
+                            strncpy(out->text, text->valuestring, CUSTOM_TEXT_MAX_LEN - 1);
+                    };
+
+                    if (left_key) {
+                        custom_key_action_t action = {};
+                        parse_key_action(left_key, &action);
+                        btn_progress_set_custom_left_action(&action);
+                    }
+                    if (right_key) {
+                        custom_key_action_t action = {};
+                        parse_key_action(right_key, &action);
+                        btn_progress_set_custom_right_action(&action);
+                    }
+
+                    // 自动保存配置
+                    dualkey_config_save();
+
                 } else if (strcmp(type->valuestring, "reset_wifi_config") == 0) {
                     // 重置WiFi配置
                     ESP_LOGI(TAG, "重置WiFi配置");
@@ -1014,6 +1060,23 @@ static void websocket_send_status(void)
     cJSON_AddNumberToObject(dualkey, "current_key_mapping", g_device_status.current_key_mapping);
     cJSON_AddBoolToObject(dualkey, "usb_mapping_enabled", g_usb_mapping_enabled);
     cJSON_AddBoolToObject(dualkey, "ble_mapping_enabled", g_ble_mapping_enabled);
+
+    // 自定义映射状态
+    cJSON_AddBoolToObject(dualkey, "custom_mapping_enabled", btn_progress_is_custom_mapping_enabled());
+    const custom_key_action_t *left_act  = btn_progress_get_custom_left_action();
+    const custom_key_action_t *right_act = btn_progress_get_custom_right_action();
+    cJSON *custom_left_json              = cJSON_CreateObject();
+    cJSON *custom_right_json             = cJSON_CreateObject();
+    cJSON_AddNumberToObject(custom_left_json, "action_type", left_act->type);
+    cJSON_AddNumberToObject(custom_left_json, "modifier", left_act->modifier);
+    cJSON_AddNumberToObject(custom_left_json, "keycode", left_act->keycode);
+    cJSON_AddStringToObject(custom_left_json, "text", left_act->text);
+    cJSON_AddNumberToObject(custom_right_json, "action_type", right_act->type);
+    cJSON_AddNumberToObject(custom_right_json, "modifier", right_act->modifier);
+    cJSON_AddNumberToObject(custom_right_json, "keycode", right_act->keycode);
+    cJSON_AddStringToObject(custom_right_json, "text", right_act->text);
+    cJSON_AddItemToObject(dualkey, "custom_left_action", custom_left_json);
+    cJSON_AddItemToObject(dualkey, "custom_right_action", custom_right_json);
 
     // WIFI状态
     cJSON_AddStringToObject(dualkey, "wifi_ssid", g_device_status.wifi_ssid);
@@ -1653,12 +1716,15 @@ static esp_err_t dualkey_config_save(void)
     memset(&config, 0, sizeof(config));
 
     // 填充配置数据
-    config.left_key_color      = g_device_status.left_key_color;
-    config.right_key_color     = g_device_status.right_key_color;
-    config.current_key_mapping = g_device_status.current_key_mapping;
-    config.usb_mapping_enabled = g_usb_mapping_enabled;
-    config.ble_mapping_enabled = g_ble_mapping_enabled;
-    config.crc32               = dualkey_config_calculate_crc(&config);
+    config.left_key_color         = g_device_status.left_key_color;
+    config.right_key_color        = g_device_status.right_key_color;
+    config.current_key_mapping    = g_device_status.current_key_mapping;
+    config.usb_mapping_enabled    = g_usb_mapping_enabled;
+    config.ble_mapping_enabled    = g_ble_mapping_enabled;
+    config.custom_mapping_enabled = btn_progress_is_custom_mapping_enabled();
+    memcpy(&config.custom_left_action, btn_progress_get_custom_left_action(), sizeof(custom_key_action_t));
+    memcpy(&config.custom_right_action, btn_progress_get_custom_right_action(), sizeof(custom_key_action_t));
+    config.crc32 = dualkey_config_calculate_crc(&config);
 
     // 保存到NVS
     ret = nvs_set_blob(nvs_handle, "config", &config, sizeof(config));
@@ -1729,6 +1795,11 @@ static esp_err_t dualkey_config_load(void)
 
     // 应用按键映射
     btn_progress_set_key_mapping(config.current_key_mapping);
+
+    // 应用自定义映射
+    btn_progress_enable_custom_mapping(config.custom_mapping_enabled);
+    btn_progress_set_custom_left_action(&config.custom_left_action);
+    btn_progress_set_custom_right_action(&config.custom_right_action);
 
     // 应用RGB颜色
     vTaskDelay(10 / portTICK_PERIOD_MS);

@@ -17,6 +17,10 @@
 #include "esp_pm.h"
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <stdio.h>
+#include <string.h>
 
 // 声明外部变量来获取设备状态
 extern bool g_usb_mapping_enabled;
@@ -26,6 +30,142 @@ static btn_report_type_t report_type = USB_CDC_REPORT;
 
 // 当前按键映射索引，默认为10（翻页模式）
 static int current_key_mapping_index = 10;
+
+// ============ 自定义映射状态 ============
+static bool custom_mapping_enabled = false;
+
+static custom_key_action_t custom_left_action = {
+    .type     = CUSTOM_ACTION_KEY,
+    .modifier = 0,
+    .keycode  = 0x4B,  // HID_KEY_PAGE_UP
+    .text     = "",
+};
+
+static custom_key_action_t custom_right_action = {
+    .type     = CUSTOM_ACTION_KEY,
+    .modifier = 0,
+    .keycode  = 0x4E,  // HID_KEY_PAGE_DOWN
+    .text     = "",
+};
+
+// 跟踪上次按键状态，用于检测上升沿（避免文本多次触发）
+static bool custom_left_prev_pressed  = false;
+static bool custom_right_prev_pressed = false;
+
+// ---- 修饰键位掩码 ----
+#define MODIFIER_LEFT_CTRL  0x01
+#define MODIFIER_LEFT_SHIFT 0x02
+#define MODIFIER_LEFT_ALT   0x04
+#define MODIFIER_LEFT_GUI   0x08
+
+// ---- US QWERTY: ASCII → (modifier, HID keycode) ----
+static bool char_to_hid(char c, uint8_t *modifier, uint8_t *keycode)
+{
+    if (c >= 'a' && c <= 'z') {
+        *modifier = 0;
+        *keycode  = 0x04 + (c - 'a');  // HID_KEY_A = 0x04
+        return true;
+    }
+    if (c >= 'A' && c <= 'Z') {
+        *modifier = MODIFIER_LEFT_SHIFT;
+        *keycode  = 0x04 + (c - 'A');
+        return true;
+    }
+    if (c >= '1' && c <= '9') {
+        *modifier = 0;
+        *keycode  = 0x1E + (c - '1');  // HID_KEY_1 = 0x1E
+        return true;
+    }
+    switch (c) {
+        case '0':  *modifier = 0;                   *keycode = 0x27; return true;  // HID_KEY_0
+        case ' ':  *modifier = 0;                   *keycode = 0x2C; return true;  // HID_KEY_SPACE
+        case '\n': *modifier = 0;                   *keycode = 0x28; return true;  // HID_KEY_ENTER
+        case '\t': *modifier = 0;                   *keycode = 0x2B; return true;  // HID_KEY_TAB
+        case '-':  *modifier = 0;                   *keycode = 0x2D; return true;  // HID_KEY_MINUS
+        case '_':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x2D; return true;
+        case '=':  *modifier = 0;                   *keycode = 0x2E; return true;  // HID_KEY_EQUAL
+        case '+':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x2E; return true;
+        case '[':  *modifier = 0;                   *keycode = 0x2F; return true;
+        case '{':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x2F; return true;
+        case ']':  *modifier = 0;                   *keycode = 0x30; return true;
+        case '}':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x30; return true;
+        case '\\': *modifier = 0;                   *keycode = 0x31; return true;
+        case '|':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x31; return true;
+        case ';':  *modifier = 0;                   *keycode = 0x33; return true;
+        case ':':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x33; return true;
+        case '\'': *modifier = 0;                   *keycode = 0x34; return true;
+        case '"':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x34; return true;
+        case '`':  *modifier = 0;                   *keycode = 0x35; return true;
+        case '~':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x35; return true;
+        case ',':  *modifier = 0;                   *keycode = 0x36; return true;
+        case '<':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x36; return true;
+        case '.':  *modifier = 0;                   *keycode = 0x37; return true;
+        case '>':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x37; return true;
+        case '/':  *modifier = 0;                   *keycode = 0x38; return true;
+        case '?':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x38; return true;
+        case '!':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x1E; return true;
+        case '@':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x1F; return true;
+        case '#':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x20; return true;
+        case '$':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x21; return true;
+        case '%':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x22; return true;
+        case '^':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x23; return true;
+        case '&':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x24; return true;
+        case '*':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x25; return true;
+        case '(':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x26; return true;
+        case ')':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x27; return true;
+        default: break;
+    }
+    return false;
+}
+
+// 逐字符输出文本字符串（阻塞，每个字符约 10ms press + 10ms release）
+static void type_text_string(const char *text)
+{
+    for (int i = 0; text[i] != '\0' && i < CUSTOM_TEXT_MAX_LEN; i++) {
+        uint8_t mod = 0, kc = 0;
+        if (!char_to_hid(text[i], &mod, &kc)) continue;
+
+        hid_report_t press = {0};
+        press.report_id                    = REPORT_ID_KEYBOARD;
+        press.keyboard_report.modifier     = mod;
+        press.keyboard_report.keycode[0]   = kc;
+
+    hid_report_t release = {0};
+    release.report_id = REPORT_ID_KEYBOARD;
+
+        // 根据当前 report_type 决定发送方式
+        switch (report_type) {
+            case TINYUSB_HID_REPORT:
+                tinyusb_hid_keyboard_report(press);
+                vTaskDelay(pdMS_TO_TICKS(10));
+                tinyusb_hid_keyboard_report(release);
+                vTaskDelay(pdMS_TO_TICKS(10));
+                break;
+            case BLE_HID_REPORT:
+                ble_hid_keyboard_report(press);
+                vTaskDelay(pdMS_TO_TICKS(10));
+                ble_hid_keyboard_report(release);
+                vTaskDelay(pdMS_TO_TICKS(10));
+                break;
+            case ALL_REPORT:
+                if (g_usb_mapping_enabled) {
+                    tinyusb_hid_keyboard_report(press);
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                    tinyusb_hid_keyboard_report(release);
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                }
+                if (g_ble_mapping_enabled) {
+                    ble_hid_keyboard_report(press);
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                    ble_hid_keyboard_report(release);
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                }
+                break;
+            default:
+                break;
+        }
+    }
+}
 
 #define HSV_MAX 18
 static uint8_t hsv_index             = 0;
@@ -91,6 +231,52 @@ void btn_progress(keyboard_btn_report_t kbd_report)
     if (sys_param->report_type == USB_CDC_REPORT) {
         // USB CDC 模式：发送原始键盘数据
         // tinyusb_cdc_send_keyboard_report(kbd_report);
+        return;
+    }
+
+    // ---- 自定义映射模式 ----
+    if (custom_mapping_enabled) {
+        bool left_now  = false;
+        bool right_now = false;
+        for (int i = 0; i < kbd_report.key_pressed_num; i++) {
+            if (kbd_report.key_data[i].input_index == 0) left_now  = true;
+            if (kbd_report.key_data[i].input_index == 1) right_now = true;
+        }
+
+        // 上升沿：触发文本输出（只在按下瞬间触发一次）
+        if (left_now && !custom_left_prev_pressed) {
+            if (custom_left_action.type == CUSTOM_ACTION_TEXT) {
+                type_text_string(custom_left_action.text);
+            }
+        }
+        if (right_now && !custom_right_prev_pressed) {
+            if (custom_right_action.type == CUSTOM_ACTION_TEXT) {
+                type_text_string(custom_right_action.text);
+            }
+        }
+
+        custom_left_prev_pressed  = left_now;
+        custom_right_prev_pressed = right_now;
+
+        // 构建 KEY 类型的 HID 报告（保持按住期间持续发送）
+        hid_report_t custom_report = {0};
+        custom_report.report_id    = REPORT_ID_KEYBOARD;
+        int ckeynum                = 0;
+
+        if (left_now && custom_left_action.type == CUSTOM_ACTION_KEY) {
+            custom_report.keyboard_report.modifier |= custom_left_action.modifier;
+            if (custom_left_action.keycode != 0 && ckeynum < 6) {
+                custom_report.keyboard_report.keycode[ckeynum++] = custom_left_action.keycode;
+            }
+        }
+        if (right_now && custom_right_action.type == CUSTOM_ACTION_KEY) {
+            custom_report.keyboard_report.modifier |= custom_right_action.modifier;
+            if (custom_right_action.keycode != 0 && ckeynum < 6) {
+                custom_report.keyboard_report.keycode[ckeynum++] = custom_right_action.keycode;
+            }
+        }
+
+        _report(custom_report);
         return;
     }
 
@@ -299,4 +485,50 @@ void btn_progress_set_key_mapping(int mapping_index)
 int btn_progress_get_key_mapping(void)
 {
     return current_key_mapping_index;
+}
+
+// ============ 自定义映射接口 ============
+
+void btn_progress_enable_custom_mapping(bool enabled)
+{
+    custom_mapping_enabled        = enabled;
+    custom_left_prev_pressed      = false;
+    custom_right_prev_pressed     = false;
+    ESP_LOGI("btn_progress", "自定义映射模式: %s", enabled ? "启用" : "禁用");
+}
+
+bool btn_progress_is_custom_mapping_enabled(void)
+{
+    return custom_mapping_enabled;
+}
+
+void btn_progress_set_custom_left_action(const custom_key_action_t *action)
+{
+    if (action) {
+        memcpy(&custom_left_action, action, sizeof(custom_key_action_t));
+        // 确保文本以 '\0' 结尾
+        custom_left_action.text[CUSTOM_TEXT_MAX_LEN - 1] = '\0';
+        ESP_LOGI("btn_progress", "左键自定义: type=%d modifier=0x%02X keycode=0x%02X",
+                 action->type, action->modifier, action->keycode);
+    }
+}
+
+void btn_progress_set_custom_right_action(const custom_key_action_t *action)
+{
+    if (action) {
+        memcpy(&custom_right_action, action, sizeof(custom_key_action_t));
+        custom_right_action.text[CUSTOM_TEXT_MAX_LEN - 1] = '\0';
+        ESP_LOGI("btn_progress", "右键自定义: type=%d modifier=0x%02X keycode=0x%02X",
+                 action->type, action->modifier, action->keycode);
+    }
+}
+
+const custom_key_action_t *btn_progress_get_custom_left_action(void)
+{
+    return &custom_left_action;
+}
+
+const custom_key_action_t *btn_progress_get_custom_right_action(void)
+{
+    return &custom_right_action;
 }

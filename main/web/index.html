@@ -130,27 +130,87 @@
                             <span class="value" id="deviceType">HID Keyboard</span>
                         </div>
                         <div class="hid-mapping-control">
-                            <label for="hidMappingSelect" class="label" data-i18n="keyMapping">按键映射:</label>
-                            <select id="hidMappingSelect" class="mapping-select" title="按键映射选择" aria-label="按键映射选择">
-                                <option value="0" data-i18n="copyPaste">复制粘贴 (Ctrl+C/V)</option>
-                                <option value="1" data-i18n="copyPasteCmd">复制粘贴 (Cmd+C/V)</option>
-                                <option value="2" data-i18n="undoRedo">撤销重做 (Ctrl+Z/Y)</option>
-                                <option value="3" data-i18n="undoRedoCmd">撤销重做 (Cmd+Z/Y)</option>
-                                <option value="4" data-i18n="undoRedoCmdShift">撤销重做 (Cmd+Z / Cmd+Shift+Z)</option>
-                                <option value="5" data-i18n="tabSwitch">标签页 (Ctrl+Tab / Ctrl+Shift+Tab)</option>
-                                <option value="6" data-i18n="windowSwitch">窗口切换 (Alt/Tab)</option>
-                                <option value="7" data-i18n="windowSwitchCmd">窗口切换 (Cmd/Tab)</option>
-                                <option value="8" data-i18n="zoom">缩放 (Ctrl+Minus/Plus)</option>
-                                <option value="9" data-i18n="zoomCmd">缩放 (Cmd+Minus/Plus)</option>
-                                <option value="10" selected data-i18n="pageUpDown">翻页 (Page Up/Down)</option>
-                                <option value="11" data-i18n="volumeControl">音量控制 (Vol+/-)</option>
-                                <option value="12" data-i18n="mediaControl">媒体控制 (Prev/Next)</option>
-                                <option value="13" data-i18n="mediaControlPlayPause">媒体控制 (PlayPause/Stop)</option>
-                                <option value="14" data-i18n="homeEnd">HOME按键 (Home/End)</option>
-                                <option value="15" data-i18n="upDown">方向键 (Up/Down)</option>
-                                <option value="16" data-i18n="leftRight">方向键 (Left/Right)</option>
-                            </select>
-                            <button class="btn btn-secondary" id="applyMappingBtn" data-i18n="apply">应用</button>
+                            <!-- 映射功能类型选择标签 -->
+                            <div class="mapping-type-selector">
+                                <span class="label" data-i18n="keyMapping">按键映射:</span>
+                                <div class="mapping-type-tabs">
+                                    <button class="map-tab-btn active" id="tabPresetMapping" data-tab="preset" data-i18n="presetMapping">预设映射</button>
+                                    <button class="map-tab-btn" id="tabCustomKeyMapping" data-tab="customKey" data-i18n="customKeyMapping">自定义按键</button>
+                                    <button class="map-tab-btn" id="tabCustomTextMapping" data-tab="customText" data-i18n="customTextMapping">自定义文本</button>
+                                </div>
+                            </div>
+
+                            <!-- 预设映射面板 -->
+                            <div id="panelPresetMapping" class="mapping-panel">
+                                <div class="preset-mapping-row">
+                                    <select id="hidMappingSelect" class="mapping-select" title="按键映射选择" aria-label="按键映射选择">
+                                        <option value="0" data-i18n="copyPaste">复制粘贴 (Ctrl+C/V)</option>
+                                        <option value="1" data-i18n="copyPasteCmd">复制粘贴 (Cmd+C/V)</option>
+                                        <option value="2" data-i18n="undoRedo">撤销重做 (Ctrl+Z/Y)</option>
+                                        <option value="3" data-i18n="undoRedoCmd">撤销重做 (Cmd+Z/Y)</option>
+                                        <option value="4" data-i18n="undoRedoCmdShift">撤销重做 (Cmd+Z / Cmd+Shift+Z)</option>
+                                        <option value="5" data-i18n="tabSwitch">标签页 (Ctrl+Tab / Ctrl+Shift+Tab)</option>
+                                        <option value="6" data-i18n="windowSwitch">窗口切换 (Alt/Tab)</option>
+                                        <option value="7" data-i18n="windowSwitchCmd">窗口切换 (Cmd/Tab)</option>
+                                        <option value="8" data-i18n="zoom">缩放 (Ctrl+Minus/Plus)</option>
+                                        <option value="9" data-i18n="zoomCmd">缩放 (Cmd+Minus/Plus)</option>
+                                        <option value="10" selected data-i18n="pageUpDown">翻页 (Page Up/Down)</option>
+                                        <option value="11" data-i18n="volumeControl">音量控制 (Vol+/-)</option>
+                                        <option value="12" data-i18n="mediaControl">媒体控制 (Prev/Next)</option>
+                                        <option value="13" data-i18n="mediaControlPlayPause">媒体控制 (PlayPause/Stop)</option>
+                                        <option value="14" data-i18n="homeEnd">HOME按键 (Home/End)</option>
+                                        <option value="15" data-i18n="upDown">方向键 (Up/Down)</option>
+                                        <option value="16" data-i18n="leftRight">方向键 (Left/Right)</option>
+                                    </select>
+                                    <button class="btn btn-secondary" id="applyMappingBtn" data-i18n="apply">应用</button>
+                                </div>
+                            </div>
+
+                            <!-- 自定义按键 / 组合键面板 -->
+                            <div id="panelCustomKeyMapping" class="mapping-panel hidden">
+                                <div class="custom-key-section">
+                                    <span class="custom-key-title" data-i18n="leftKey">左键</span>
+                                    <div class="modifier-group">
+                                        <label class="modifier-check"><input type="checkbox" id="leftModCtrl"> Ctrl</label>
+                                        <label class="modifier-check"><input type="checkbox" id="leftModShift"> Shift</label>
+                                        <label class="modifier-check"><input type="checkbox" id="leftModAlt"> Alt/Opt</label>
+                                        <label class="modifier-check"><input type="checkbox" id="leftModGui"> Win/Cmd</label>
+                                    </div>
+                                    <select id="leftKeyCodeSelect" class="key-select" title="左键键码" aria-label="左键键码选择">
+                                        <!-- 由 JS 动态填充 -->
+                                    </select>
+                                </div>
+                                <div class="custom-key-section">
+                                    <span class="custom-key-title" data-i18n="rightKey">右键</span>
+                                    <div class="modifier-group">
+                                        <label class="modifier-check"><input type="checkbox" id="rightModCtrl"> Ctrl</label>
+                                        <label class="modifier-check"><input type="checkbox" id="rightModShift"> Shift</label>
+                                        <label class="modifier-check"><input type="checkbox" id="rightModAlt"> Alt/Opt</label>
+                                        <label class="modifier-check"><input type="checkbox" id="rightModGui"> Win/Cmd</label>
+                                    </div>
+                                    <select id="rightKeyCodeSelect" class="key-select" title="右键键码" aria-label="右键键码选择">
+                                        <!-- 由 JS 动态填充 -->
+                                    </select>
+                                </div>
+                                <button class="btn btn-primary" id="applyCustomKeyBtn" data-i18n="apply">应用</button>
+                            </div>
+
+                            <!-- 自定义文本面板 -->
+                            <div id="panelCustomTextMapping" class="mapping-panel hidden">
+                                <div class="custom-text-notice">
+                                    <span class="notice-icon">⚠️</span>
+                                    <span data-i18n="customTextNoticeText">仅支持 ASCII 可打印字符，暂不支持中文等需编码文字</span>
+                                </div>
+                                <div class="custom-text-section">
+                                    <label for="leftKeyText" class="custom-text-label" data-i18n="leftKeyText">左键文本:</label>
+                                    <input type="text" id="leftKeyText" class="custom-text-input" placeholder="" maxlength="63" title="左键文本输入" aria-label="左键文本">
+                                </div>
+                                <div class="custom-text-section">
+                                    <label for="rightKeyText" class="custom-text-label" data-i18n="rightKeyText">右键文本:</label>
+                                    <input type="text" id="rightKeyText" class="custom-text-input" placeholder="" maxlength="63" title="右键文本输入" aria-label="右键文本">
+                                </div>
+                                <button class="btn btn-primary" id="applyCustomTextBtn" data-i18n="apply">应用</button>
+                            </div>
                         </div>
                         <div class="mapping-switches">
                             <span class="label" data-i18n="mappingSwitch">映射开关:</span>

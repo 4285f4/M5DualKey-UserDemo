@@ -1,0 +1,104 @@
+dependencies:
+  espressif/button:
+    component_hash: 4ed25fcf354b48aa5e5680b9e7549e38d7738f9b613c94a2e39119c100db9c95
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 4.1.4
+  espressif/cmake_utilities:
+    component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.5.3
+  espressif/led_indicator:
+    component_hash: 5b2531835a989825c0dc94465e3481086473e086dca109b99bea5605d8e70396
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    - name: idf
+      require: private
+      version: '>=4.0'
+    - name: espressif/led_strip
+      registry_url: https://components.espressif.com
+      require: public
+      version: 2.5.5
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.1.1
+  espressif/led_strip:
+    component_hash: 28c6509a727ef74925b372ed404772aeedf11cce10b78c3f69b3c66799095e2d
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.5.5
+  espressif/tinyusb:
+    component_hash: 7fa5016d792d8e4025a8352b4fd4af7c124947647037e9d2449c9e0b47fdf663
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32h4
+    version: 0.18.0~6
+  idf:
+    source:
+      type: idf
+    version: 5.5.1
+  keyboard_button:
+    dependencies: []
+    source:
+      path: /home/dylan/M5DualKey-UserDemo/components/keyboard_button
+      type: local
+    version: 1.0.0
+  lijunru-hub/keyboard_rgb_matrix:
+    component_hash: ecbe8ec9acf97272b90de19f0c0f229bcbaf4c1f7cca0518593d623f578e1bc4
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    - name: espressif/led_strip
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^2.5.3
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.1.2
+direct_dependencies:
+- espressif/button
+- espressif/cmake_utilities
+- espressif/led_indicator
+- espressif/led_strip
+- espressif/tinyusb
+- idf
+- keyboard_button
+- lijunru-hub/keyboard_rgb_matrix
+manifest_hash: 30845f7a9524d3deb3d72ef13b66e69b287398ed1b6f9b9b231c333d24f0a4f1
+target: esp32s3
+version: 2.0.0
