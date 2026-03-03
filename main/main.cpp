@@ -977,10 +977,8 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                         cJSON *text        = cJSON_GetObjectItem(key_obj, "text");
                         if (action_type && cJSON_IsNumber(action_type))
                             out->type = (custom_action_type_t)(int)action_type->valueint;
-                        if (modifier && cJSON_IsNumber(modifier))
-                            out->modifier = (uint8_t)modifier->valueint;
-                        if (keycode && cJSON_IsNumber(keycode))
-                            out->keycode = (uint8_t)keycode->valueint;
+                        if (modifier && cJSON_IsNumber(modifier)) out->modifier = (uint8_t)modifier->valueint;
+                        if (keycode && cJSON_IsNumber(keycode)) out->keycode = (uint8_t)keycode->valueint;
                         if (text && cJSON_IsString(text))
                             strncpy(out->text, text->valuestring, CUSTOM_TEXT_MAX_LEN - 1);
                     };

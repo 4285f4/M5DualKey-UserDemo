@@ -77,43 +77,152 @@ static bool char_to_hid(char c, uint8_t *modifier, uint8_t *keycode)
         return true;
     }
     switch (c) {
-        case '0':  *modifier = 0;                   *keycode = 0x27; return true;  // HID_KEY_0
-        case ' ':  *modifier = 0;                   *keycode = 0x2C; return true;  // HID_KEY_SPACE
-        case '\n': *modifier = 0;                   *keycode = 0x28; return true;  // HID_KEY_ENTER
-        case '\t': *modifier = 0;                   *keycode = 0x2B; return true;  // HID_KEY_TAB
-        case '-':  *modifier = 0;                   *keycode = 0x2D; return true;  // HID_KEY_MINUS
-        case '_':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x2D; return true;
-        case '=':  *modifier = 0;                   *keycode = 0x2E; return true;  // HID_KEY_EQUAL
-        case '+':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x2E; return true;
-        case '[':  *modifier = 0;                   *keycode = 0x2F; return true;
-        case '{':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x2F; return true;
-        case ']':  *modifier = 0;                   *keycode = 0x30; return true;
-        case '}':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x30; return true;
-        case '\\': *modifier = 0;                   *keycode = 0x31; return true;
-        case '|':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x31; return true;
-        case ';':  *modifier = 0;                   *keycode = 0x33; return true;
-        case ':':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x33; return true;
-        case '\'': *modifier = 0;                   *keycode = 0x34; return true;
-        case '"':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x34; return true;
-        case '`':  *modifier = 0;                   *keycode = 0x35; return true;
-        case '~':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x35; return true;
-        case ',':  *modifier = 0;                   *keycode = 0x36; return true;
-        case '<':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x36; return true;
-        case '.':  *modifier = 0;                   *keycode = 0x37; return true;
-        case '>':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x37; return true;
-        case '/':  *modifier = 0;                   *keycode = 0x38; return true;
-        case '?':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x38; return true;
-        case '!':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x1E; return true;
-        case '@':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x1F; return true;
-        case '#':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x20; return true;
-        case '$':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x21; return true;
-        case '%':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x22; return true;
-        case '^':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x23; return true;
-        case '&':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x24; return true;
-        case '*':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x25; return true;
-        case '(':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x26; return true;
-        case ')':  *modifier = MODIFIER_LEFT_SHIFT; *keycode = 0x27; return true;
-        default: break;
+        case '0':
+            *modifier = 0;
+            *keycode  = 0x27;
+            return true;  // HID_KEY_0
+        case ' ':
+            *modifier = 0;
+            *keycode  = 0x2C;
+            return true;  // HID_KEY_SPACE
+        case '\n':
+            *modifier = 0;
+            *keycode  = 0x28;
+            return true;  // HID_KEY_ENTER
+        case '\t':
+            *modifier = 0;
+            *keycode  = 0x2B;
+            return true;  // HID_KEY_TAB
+        case '-':
+            *modifier = 0;
+            *keycode  = 0x2D;
+            return true;  // HID_KEY_MINUS
+        case '_':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x2D;
+            return true;
+        case '=':
+            *modifier = 0;
+            *keycode  = 0x2E;
+            return true;  // HID_KEY_EQUAL
+        case '+':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x2E;
+            return true;
+        case '[':
+            *modifier = 0;
+            *keycode  = 0x2F;
+            return true;
+        case '{':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x2F;
+            return true;
+        case ']':
+            *modifier = 0;
+            *keycode  = 0x30;
+            return true;
+        case '}':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x30;
+            return true;
+        case '\\':
+            *modifier = 0;
+            *keycode  = 0x31;
+            return true;
+        case '|':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x31;
+            return true;
+        case ';':
+            *modifier = 0;
+            *keycode  = 0x33;
+            return true;
+        case ':':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x33;
+            return true;
+        case '\'':
+            *modifier = 0;
+            *keycode  = 0x34;
+            return true;
+        case '"':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x34;
+            return true;
+        case '`':
+            *modifier = 0;
+            *keycode  = 0x35;
+            return true;
+        case '~':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x35;
+            return true;
+        case ',':
+            *modifier = 0;
+            *keycode  = 0x36;
+            return true;
+        case '<':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x36;
+            return true;
+        case '.':
+            *modifier = 0;
+            *keycode  = 0x37;
+            return true;
+        case '>':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x37;
+            return true;
+        case '/':
+            *modifier = 0;
+            *keycode  = 0x38;
+            return true;
+        case '?':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x38;
+            return true;
+        case '!':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x1E;
+            return true;
+        case '@':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x1F;
+            return true;
+        case '#':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x20;
+            return true;
+        case '$':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x21;
+            return true;
+        case '%':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x22;
+            return true;
+        case '^':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x23;
+            return true;
+        case '&':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x24;
+            return true;
+        case '*':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x25;
+            return true;
+        case '(':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x26;
+            return true;
+        case ')':
+            *modifier = MODIFIER_LEFT_SHIFT;
+            *keycode  = 0x27;
+            return true;
+        default:
+            break;
     }
     return false;
 }
@@ -125,13 +234,13 @@ static void type_text_string(const char *text)
         uint8_t mod = 0, kc = 0;
         if (!char_to_hid(text[i], &mod, &kc)) continue;
 
-        hid_report_t press = {0};
-        press.report_id                    = REPORT_ID_KEYBOARD;
-        press.keyboard_report.modifier     = mod;
-        press.keyboard_report.keycode[0]   = kc;
+        hid_report_t press               = {0};
+        press.report_id                  = REPORT_ID_KEYBOARD;
+        press.keyboard_report.modifier   = mod;
+        press.keyboard_report.keycode[0] = kc;
 
-    hid_report_t release = {0};
-    release.report_id = REPORT_ID_KEYBOARD;
+        hid_report_t release = {0};
+        release.report_id    = REPORT_ID_KEYBOARD;
 
         // 根据当前 report_type 决定发送方式
         switch (report_type) {
@@ -239,7 +348,7 @@ void btn_progress(keyboard_btn_report_t kbd_report)
         bool left_now  = false;
         bool right_now = false;
         for (int i = 0; i < kbd_report.key_pressed_num; i++) {
-            if (kbd_report.key_data[i].input_index == 0) left_now  = true;
+            if (kbd_report.key_data[i].input_index == 0) left_now = true;
             if (kbd_report.key_data[i].input_index == 1) right_now = true;
         }
 
@@ -491,9 +600,9 @@ int btn_progress_get_key_mapping(void)
 
 void btn_progress_enable_custom_mapping(bool enabled)
 {
-    custom_mapping_enabled        = enabled;
-    custom_left_prev_pressed      = false;
-    custom_right_prev_pressed     = false;
+    custom_mapping_enabled    = enabled;
+    custom_left_prev_pressed  = false;
+    custom_right_prev_pressed = false;
     ESP_LOGI("btn_progress", "自定义映射模式: %s", enabled ? "启用" : "禁用");
 }
 
@@ -508,8 +617,8 @@ void btn_progress_set_custom_left_action(const custom_key_action_t *action)
         memcpy(&custom_left_action, action, sizeof(custom_key_action_t));
         // 确保文本以 '\0' 结尾
         custom_left_action.text[CUSTOM_TEXT_MAX_LEN - 1] = '\0';
-        ESP_LOGI("btn_progress", "左键自定义: type=%d modifier=0x%02X keycode=0x%02X",
-                 action->type, action->modifier, action->keycode);
+        ESP_LOGI("btn_progress", "左键自定义: type=%d modifier=0x%02X keycode=0x%02X", action->type, action->modifier,
+                 action->keycode);
     }
 }
 
@@ -518,8 +627,8 @@ void btn_progress_set_custom_right_action(const custom_key_action_t *action)
     if (action) {
         memcpy(&custom_right_action, action, sizeof(custom_key_action_t));
         custom_right_action.text[CUSTOM_TEXT_MAX_LEN - 1] = '\0';
-        ESP_LOGI("btn_progress", "右键自定义: type=%d modifier=0x%02X keycode=0x%02X",
-                 action->type, action->modifier, action->keycode);
+        ESP_LOGI("btn_progress", "右键自定义: type=%d modifier=0x%02X keycode=0x%02X", action->type, action->modifier,
+                 action->keycode);
     }
 }
 

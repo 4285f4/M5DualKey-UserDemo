@@ -91,10 +91,10 @@ typedef enum {
 
 /** 自定义按键动作 */
 typedef struct {
-    custom_action_type_t type;      // 动作类型
-    uint8_t modifier;               // 修饰键掩码: bit0=LCtrl bit1=LShift bit2=LAlt bit3=LGUI bit4=RCtrl bit5=RShift bit6=RAlt bit7=RGUI
-    uint8_t keycode;                // HID 键码 (key/combo 有效)
-    char text[CUSTOM_TEXT_MAX_LEN]; // 文本字符串 (text 有效)
+    custom_action_type_t type;  // 动作类型
+    uint8_t modifier;  //  bit0=LCtrl bit1=LShift bit2=LAlt bit3=LGUI bit4=RCtrl bit5=RShift bit6=RAlt bit7=RGUI
+    uint8_t keycode;   // HID 键码 (key/combo 有效)
+    char text[CUSTOM_TEXT_MAX_LEN];  // 文本字符串 (text 有效)
 } custom_key_action_t;
 
 /**
