@@ -4,7 +4,7 @@
  *SPDX-License-Identifier: MIT
  */
 
-#include "ChainAngle.hpp"
+#include "ChainAngle/ChainAngle.hpp"
 
 chain_status_t ChainAngle::getAngle12BitAdc(uint8_t id, uint16_t *adcValue, unsigned long timeout)
 {
@@ -55,8 +55,8 @@ chain_status_t ChainAngle::getAngle8BitAdc(uint8_t id, uint8_t *adcValue, unsign
 }
 
 chain_status_t ChainAngle::setAngleRotationDirection(uint8_t id, angle_rotation_direction_t direction,
-                                                uint8_t *operationStatus, chain_save_flash_t saveToFlash,
-                                                unsigned long timeout)
+                                                     uint8_t *operationStatus, chain_save_flash_t saveToFlash,
+                                                     unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -87,7 +87,7 @@ chain_status_t ChainAngle::setAngleRotationDirection(uint8_t id, angle_rotation_
 }
 
 chain_status_t ChainAngle::getAngleRotationDirection(uint8_t id, angle_rotation_direction_t *direction,
-                                                unsigned long timeout)
+                                                     unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -107,6 +107,6 @@ chain_status_t ChainAngle::getAngleRotationDirection(uint8_t id, angle_rotation_
     } else {
         status = CHAIN_BUSY;
     }
-    
+
     return status;
 }

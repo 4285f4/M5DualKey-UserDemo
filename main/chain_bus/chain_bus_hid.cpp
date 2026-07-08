@@ -36,6 +36,10 @@ const hid_func_desc_t hid_func_table[] = {
     {HID_FUNC_MOUSE_BUTTON_RIGHT_DOWN, "鼠标右键按下", "鼠标右键按下"},
     {HID_FUNC_MOUSE_BUTTON_RIGHT_UP, "鼠标右键释放", "鼠标右键释放"},
     {HID_FUNC_MOUSE_MOVE, "鼠标移动", "移动鼠标指针"},
+    {HID_FUNC_MOUSE_MOVE_LEFT, "鼠标左移", "鼠标指针向左移动"},
+    {HID_FUNC_MOUSE_MOVE_RIGHT, "鼠标右移", "鼠标指针向右移动"},
+    {HID_FUNC_MOUSE_MOVE_UP, "鼠标上移", "鼠标指针向上移动"},
+    {HID_FUNC_MOUSE_MOVE_DOWN, "鼠标下移", "鼠标指针向下移动"},
     {HID_FUNC_MOUSE_SCROLL, "鼠标竖向滚轮", "鼠标竖向滚轮"},
     {HID_FUNC_MOUSE_SCROLL_UP, "鼠标竖向滚轮向上", "鼠标竖向滚轮向上"},
     {HID_FUNC_MOUSE_SCROLL_DOWN, "鼠标竖向滚轮向下", "鼠标竖向滚轮向下"},
@@ -53,6 +57,9 @@ const hid_func_desc_t hid_func_table[] = {
     {HID_FUNC_MEDIA_NEXT, "下一首", "播放下一首"},
     {HID_FUNC_MEDIA_PREV, "上一首", "播放上一首"},
     {HID_FUNC_MEDIA_STOP, "停止播放", "停止媒体播放"},
+
+    {HID_FUNC_JOYSTICK_WASD, "摇杆WASD", "摇杆映射WASD八方向"},
+    {HID_FUNC_JOYSTICK_ARROWS, "摇杆方向键", "摇杆映射方向键八方向"},
 };
 
 // 鼠标移动中枢状态
@@ -98,6 +105,7 @@ static TaskHandle_t g_mouse_hub_task_handle = NULL;
 
 // 内部函数声明
 static esp_err_t send_keyboard_report(uint8_t modifier, uint8_t keycode);
+static esp_err_t send_keyboard_keys_report(uint8_t modifier, const uint8_t* keycodes, uint8_t key_count);
 static esp_err_t send_consumer_report(uint16_t keycode);
 static esp_err_t send_mouse_report(uint8_t buttons, int8_t x, int8_t y, int8_t wheel, int8_t pan);
 
@@ -319,6 +327,85 @@ const hid_func_desc_t* chain_bus_hid_get_all_functions(size_t* count)
     return hid_func_table;
 }
 
+// 摇杆键盘映射状态
+typedef struct {
+    uint8_t keys[2];
+    uint8_t count;
+    hid_func_type_t mode;
+} joystick_key_hub_t;
+
+static joystick_key_hub_t g_joy_key_hub = {{0}, 0, HID_FUNC_NONE};
+
+static bool joystick_keys_equal(const uint8_t* a, uint8_t ac, const uint8_t* b, uint8_t bc)
+{
+    if (ac != bc) {
+        return false;
+    }
+    for (uint8_t i = 0; i < ac; i++) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+esp_err_t chain_bus_hid_update_joystick_keys(hid_func_type_t func_type, int8_t x, int8_t y)
+{
+    if (func_type != HID_FUNC_JOYSTICK_WASD && func_type != HID_FUNC_JOYSTICK_ARROWS) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const int8_t deadzone = 20;
+    uint8_t new_keys[2]   = {0};
+    uint8_t new_count     = 0;
+    const bool use_wasd   = (func_type == HID_FUNC_JOYSTICK_WASD);
+
+    if (abs(x) > deadzone || abs(y) > deadzone) {
+        const bool up    = y > deadzone;
+        const bool down  = y < -deadzone;
+        const bool left  = x < -deadzone;
+        const bool right = x > deadzone;
+
+        if (use_wasd) {
+            if (up) {
+                new_keys[new_count++] = KC_W;
+            }
+            if (down) {
+                new_keys[new_count++] = KC_S;
+            }
+            if (left) {
+                new_keys[new_count++] = KC_A;
+            }
+            if (right) {
+                new_keys[new_count++] = KC_D;
+            }
+        } else {
+            if (up) {
+                new_keys[new_count++] = KC_UP;
+            }
+            if (down) {
+                new_keys[new_count++] = KC_DOWN;
+            }
+            if (left) {
+                new_keys[new_count++] = KC_LEFT;
+            }
+            if (right) {
+                new_keys[new_count++] = KC_RIGHT;
+            }
+        }
+    }
+
+    if (g_joy_key_hub.mode != func_type ||
+        !joystick_keys_equal(g_joy_key_hub.keys, g_joy_key_hub.count, new_keys, new_count)) {
+        g_joy_key_hub.mode  = func_type;
+        g_joy_key_hub.count = new_count;
+        memcpy(g_joy_key_hub.keys, new_keys, sizeof(new_keys));
+        return send_keyboard_keys_report(0, new_keys, new_count);
+    }
+
+    return ESP_OK;
+}
+
 // 鼠标中枢任务实现
 static void mouse_hub_task(void* pvParameters)
 {
@@ -440,6 +527,30 @@ static esp_err_t send_keyboard_report(uint8_t modifier, uint8_t keycode)
     return ESP_OK;
 }
 
+static esp_err_t send_keyboard_keys_report(uint8_t modifier, const uint8_t* keycodes, uint8_t key_count)
+{
+    hid_report_t report;
+    memset(&report, 0, sizeof(report));
+
+    report.report_id                = REPORT_ID_KEYBOARD;
+    report.keyboard_report.modifier = modifier;
+    report.keyboard_report.reserved = 0;
+    memset(report.keyboard_report.keycode, 0, sizeof(report.keyboard_report.keycode));
+    if (keycodes && key_count > 0) {
+        uint8_t copy_count = (key_count > 6) ? 6 : key_count;
+        memcpy(report.keyboard_report.keycode, keycodes, copy_count);
+    }
+
+    if (g_usb_mapping_enabled) {
+        tinyusb_hid_keyboard_report(report);
+    }
+    if (g_ble_mapping_enabled) {
+        ble_hid_keyboard_report(report);
+    }
+
+    return ESP_OK;
+}
+
 static esp_err_t send_consumer_report(uint16_t keycode)
 {
     hid_report_t report;
@@ -481,6 +592,14 @@ static esp_err_t send_mouse_report(uint8_t buttons, int8_t x, int8_t y, int8_t w
     }
 
     return ESP_OK;
+}
+
+esp_err_t chain_bus_hid_send_mouse_delta(int8_t dx, int8_t dy)
+{
+    if (dx == 0 && dy == 0) {
+        return ESP_OK;
+    }
+    return send_mouse_report(g_mouse_hub.buttons, dx, dy, 0, 0);
 }
 
 // 发送键盘按键（带自动释放）
@@ -536,11 +655,19 @@ static esp_err_t update_mouse_scroll(int8_t wheel_delta)
 
 static esp_err_t update_mouse_movement(int16_t x, int16_t y)
 {
-    // 检查是否有新的移动请求
+    if (x == 0 && y == 0) {
+        return ESP_OK;
+    }
+
+    // 摇杆等小增量：每帧直接上报，避免平滑中枢导致跟手迟滞
+    if (abs(x) <= 63 && abs(y) <= 63) {
+        return send_mouse_report(g_mouse_hub.buttons, (int8_t)x, (int8_t)y, 0, 0);
+    }
+
+    // 大位移（编码器等）：走平滑中枢
     if (x != g_mouse_hub.target_x || y != g_mouse_hub.target_y) {
-        // 重置移动状态，开始新的移动
         g_mouse_hub.current_step = 0;
-        g_mouse_hub.current_x    = 0;  // 从原点开始新的移动
+        g_mouse_hub.current_x    = 0;
         g_mouse_hub.current_y    = 0;
         g_mouse_hub.target_x     = x;
         g_mouse_hub.target_y     = y;

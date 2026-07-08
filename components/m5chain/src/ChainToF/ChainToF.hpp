@@ -7,7 +7,7 @@
 #ifndef _CHAIN_TOF_HPP_
 #define _CHAIN_TOF_HPP_
 
-#include <ChainCommon.hpp>
+#include "ChainCommon/ChainCommon.hpp"
 
 /**
  * @brief Minimum allowable measurement time for the Chain_ToF sensor (in milliseconds).
@@ -88,8 +88,7 @@ public:
      * @param timeout Timeout duration in milliseconds (default: 100 ms).
      * @return Operation status.
      */
-    chain_status_t setToFMeasureTime(uint8_t id, uint8_t time, uint8_t *operationStatus,
-                                         unsigned long timeout = 100);
+    chain_status_t setToFMeasureTime(uint8_t id, uint8_t time, uint8_t *operationStatus, unsigned long timeout = 100);
 
     /**
      * @brief Get the current measurement timing from the ToF device.
@@ -111,7 +110,7 @@ public:
      * @return Operation status.
      */
     chain_status_t setToFMeasureMode(uint8_t id, chain_tof_mode_t mode, uint8_t *operationStatus,
-                                         unsigned long timeout = 100);
+                                     unsigned long timeout = 100);
 
     /**
      * @brief Get the current measurement mode from the ToF device.
@@ -134,8 +133,8 @@ public:
      * @param timeout Timeout duration in milliseconds (default: 100 ms).
      * @return Operation status.
      */
-    chain_status_t setToFMeasureStatus(uint8_t id, chain_tof_measure_status_t measureStatus,
-                                           uint8_t *operationStatus, unsigned long timeout = 100);
+    chain_status_t setToFMeasureStatus(uint8_t id, chain_tof_measure_status_t measureStatus, uint8_t *operationStatus,
+                                       unsigned long timeout = 100);
 
     /**
      * @brief Get the current measurement status (START / STOP) from the ToF device.
@@ -146,7 +145,7 @@ public:
      * @return Operation status.
      */
     chain_status_t getToFMeasureStatus(uint8_t id, chain_tof_measure_status_t *measureStatus,
-                                           unsigned long timeout = 100);
+                                       unsigned long timeout = 100);
 
     /**
      * @brief Check whether the current measurement cycle is complete.

@@ -1,5 +1,5 @@
 /*
- *SPDX-FileCopyrightText: 2025 M5Stack Technology CO LTD
+ *SPDX-FileCopyrightText: 2026 M5Stack Technology CO LTD
  *
  *SPDX-License-Identifier: MIT
  */
@@ -7,29 +7,43 @@
 #ifndef _CHAIN_HPP_
 #define _CHAIN_HPP_
 
-#include "ChainCommon.hpp"
-#include "ChainEncoder.hpp"
-#include "ChainAngle.hpp"
-#include "ChainJoystick.hpp"
-#include "ChainKey.hpp"
-#include "ChainToF.hpp"
-#include "ChainUart.hpp"
-#include "ChainSwitch.hpp"
-#include "ChainPIR.hpp"
-#include "ChainMIC.hpp"
-#include "ChainPedal.hpp"
+#include "ChainCommon/ChainCommon.hpp"
+#include "ChainJoystick/ChainJoystick.hpp"
+#include "ChainKey/ChainKey.hpp"
+#include "ChainAngle/ChainAngle.hpp"
+#include "ChainEncoder/ChainEncoder.hpp"
+#include "ChainToF/ChainToF.hpp"
+#include "ChainSwitch/ChainSwitch.hpp"
+#include "ChainPIR/ChainPIR.hpp"
+#include "ChainMIC/ChainMIC.hpp"
+#include "UnitChainBus/UnitChainBus.hpp"
+#include "Unit8Servos2Chain/Unit8Servos2Chain.hpp"
+#include "ChainBuzzer/ChainBuzzer.hpp"
+#include "ChainPedal/ChainPedal.hpp"
+#include "ChainMono/ChainMono.hpp"
+#include "ChainRGB/ChainRGB.hpp"
+#include "ChainDLight/ChainDLight.hpp"
+#include "ChainENV/ChainENV.hpp"
+#include "ChainIMU/ChainIMU.hpp"
 
 class Chain : virtual public ChainCommon,
-              virtual public ChainEncoder,
-              virtual public ChainAngle,
               virtual public ChainJoystick,
               virtual public ChainKey,
+              virtual public ChainAngle,
+              virtual public ChainEncoder,
               virtual public ChainToF,
-              virtual public ChainUart,
-              virtual public ChainSwitch,  
+              virtual public ChainSwitch,
               virtual public ChainPIR,
               virtual public ChainMIC,
-              virtual public ChainPedal {
+              virtual public UnitChainBus,
+              virtual public Unit8Servos2Chain,
+              virtual public ChainBuzzer,
+              virtual public ChainMono,
+              virtual public ChainRGB,
+              virtual public ChainPedal,
+              virtual public ChainDLight,
+              virtual public ChainENV,
+              virtual public ChainIMU {
 public:
 private:
 };

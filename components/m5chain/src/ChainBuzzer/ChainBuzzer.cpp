@@ -1,10 +1,10 @@
 /*
- *SPDX-FileCopyrightText: 2025 M5Stack Technology CO LTD
+ *SPDX-FileCopyrightText: 2026 M5Stack Technology CO LTD
  *
  *SPDX-License-Identifier: MIT
  */
 
-#include "ChainBuzzer.hpp"
+#include "ChainBuzzer/ChainBuzzer.hpp"
 
 chain_status_t ChainBuzzer::setBuzzerMode(uint8_t id, buzzer_mode_t mode, uint8_t *operationStatus,
                                           unsigned long timeout)
@@ -233,6 +233,38 @@ chain_status_t ChainBuzzer::getBuzzerStatus(uint8_t id, buzzer_status_t *buzzerS
         if (waitForData(id, CHAIN_BUZZER_GET_STATUS, timeout)) {
             if (checkPacket(returnPacket, returnPacketSize)) {
                 *buzzerStatus = (buzzer_status_t)returnPacket[6];
+            } else {
+                status = CHAIN_RETURN_PACKET_ERROR;
+            }
+        } else {
+            status = CHAIN_TIMEOUT;
+        }
+        releaseMutex();
+    } else {
+        status = CHAIN_BUSY;
+    }
+
+    return status;
+}
+
+chain_status_t ChainBuzzer::setBuzzerNotePlay(uint8_t id, note_index_t note, uint16_t duration,
+                                              uint8_t *operationStatus, unsigned long timeout)
+{
+    chain_status_t status = CHAIN_OK;
+
+    if (note >= NOTE_COUNT) {
+        return CHAIN_PARAMETER_ERROR;
+    }
+
+    if (acquireMutex()) {
+        cmdBufferSize              = 0;
+        cmdBuffer[cmdBufferSize++] = (uint8_t)note;
+        cmdBuffer[cmdBufferSize++] = (uint8_t)(duration & 0xFF);
+        cmdBuffer[cmdBufferSize++] = (uint8_t)(duration >> 8);
+        sendPacket(id, CHAIN_BUZZER_SET_NOTE_PLAY, cmdBuffer, cmdBufferSize);
+        if (waitForData(id, CHAIN_BUZZER_SET_NOTE_PLAY, timeout)) {
+            if (checkPacket(returnPacket, returnPacketSize)) {
+                *operationStatus = returnPacket[6];
             } else {
                 status = CHAIN_RETURN_PACKET_ERROR;
             }

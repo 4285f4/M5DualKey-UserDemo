@@ -30,9 +30,9 @@ void ChainCommon::releaseMutex(void)
 
 esp_err_t ChainCommon::begin(uart_port_t uart_num, int baud, int txPin, int rxPin, int timeout_ms)
 {
-    uartPort = uart_num;
+    uartPort      = uart_num;
     timeout_ticks = pdMS_TO_TICKS(timeout_ms);
-    
+
     // UART configuration
     uart_config_t uart_config = {
         .baud_rate = baud,
@@ -46,31 +46,30 @@ esp_err_t ChainCommon::begin(uart_port_t uart_num, int baud, int txPin, int rxPi
         .source_clk = UART_SCLK_XTAL,
 #endif
     };
-    
+
     // Install UART driver
     esp_err_t ret = uart_driver_install(uartPort, RECEIVE_BUFFER_SIZE * 2, SEND_BUFFER_SIZE * 2, 20, NULL, 0);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "UART driver install failed: %s", esp_err_to_name(ret));
         return ret;
     }
-    
+
     // Configure UART parameters
     ret = uart_param_config(uartPort, &uart_config);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "UART param config failed: %s", esp_err_to_name(ret));
         return ret;
     }
-    
+
     // Set UART pins
     ret = uart_set_pin(uartPort, txPin, rxPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "UART set pin failed: %s", esp_err_to_name(ret));
         return ret;
     }
-    
-    ESP_LOGI(TAG, "UART%d initialized successfully (TX:%d, RX:%d, Baud:%d)", 
-             uartPort, txPin, rxPin, baud);
-    
+
+    ESP_LOGI(TAG, "UART%d initialized successfully (TX:%d, RX:%d, Baud:%d)", uartPort, txPin, rxPin, baud);
+
     return ESP_OK;
 }
 
@@ -310,7 +309,7 @@ void ChainCommon::readBuffer(void)
             int len = uart_read_bytes(uartPort, &data, 1, pdMS_TO_TICKS(1));
             if (len > 0) {
                 receiveBuffer[receiveBufferSize++] = data;
-                startTime = xTaskGetTickCount();
+                startTime                          = xTaskGetTickCount();
             }
         }
     }
@@ -318,12 +317,12 @@ void ChainCommon::readBuffer(void)
 
 bool ChainCommon::waitForData(uint16_t id, uint8_t cmd, uint32_t timeout)
 {
-    TickType_t startTime = xTaskGetTickCount();
+    TickType_t startTime    = xTaskGetTickCount();
     TickType_t timeoutTicks = pdMS_TO_TICKS(timeout);
     while ((xTaskGetTickCount() - startTime) < timeoutTicks) {
-        if (available()) {     
-            readBuffer();                             
-            bool status = processBufferData(id, cmd); 
+        if (available()) {
+            readBuffer();
+            bool status = processBufferData(id, cmd);
             if (status) {
                 return true;
             }
@@ -632,7 +631,7 @@ bool ChainCommon::isDeviceConnected(uint8_t maxRetries, unsigned long timeout)
 bool ChainCommon::getDeviceList(device_list_t *list, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
-    TickType_t startTime = xTaskGetTickCount();
+    TickType_t startTime  = xTaskGetTickCount();
     for (uint16_t i = 0; i < list->count; i++) {
         list->devices[i].id = i + 1;
         status              = getDeviceType(list->devices[i].id, &list->devices[i].device_type, timeout);

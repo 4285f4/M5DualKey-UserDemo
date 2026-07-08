@@ -7,7 +7,7 @@
 #ifndef _CHAIN_ANGLE_HPP_
 #define _CHAIN_ANGLE_HPP_
 
-#include <ChainCommon.hpp>
+#include "ChainCommon/ChainCommon.hpp"
 
 /**
  * @brief RotationDirection status for Angle device.
@@ -19,7 +19,6 @@ typedef enum {
     ANGLE_ROTATION_DECREASING = 0x00, /**< Rotation direction decreasing angle. */
     ANGLE_ROTATION_INCREASING = 0x01, /**< Rotation direction increasing angle. */
 } angle_rotation_direction_t;
-
 
 /**
  * @brief Enumeration for Chain_Angle device commands.
@@ -33,8 +32,7 @@ typedef enum {
     CHAIN_ANGLE_GET_CLOCKWISE_STATUS = 0x33, /**< Command to get the current clockwise direction status */
 } CHAIN_ANGLE_CMD_T;                         /**< Command types for Chain_Angle device operations */
 
-class ChainAngle :  virtual public ChainCommon {
-
+class ChainAngle : virtual public ChainCommon {
 public:
     /**
      * @brief Retrieves the 12-bit ADC value of the Angle device.
@@ -78,8 +76,9 @@ public:
      *
      * @return The operation status (e.g., `CHAIN_OK`, `CHAIN_PARAMETER_ERROR`, etc.).
      */
-    chain_status_t setAngleRotationDirection(uint8_t id, angle_rotation_direction_t direction, uint8_t *operationStatus, chain_save_flash_t saveToFlash = CHAIN_SAVE_FLASH_DISABLE,
-                                unsigned long timeout = 100);
+    chain_status_t setAngleRotationDirection(uint8_t id, angle_rotation_direction_t direction, uint8_t *operationStatus,
+                                             chain_save_flash_t saveToFlash = CHAIN_SAVE_FLASH_DISABLE,
+                                             unsigned long timeout          = 100);
 
     /**
      * @brief Retrieves the current clockwise rotation change status of the angle device at the specified position in
@@ -95,7 +94,8 @@ public:
      *
      * @return The operation status (e.g., `CHAIN_OK`, `CHAIN_TIMEOUT`, etc.).
      */
-    chain_status_t getAngleRotationDirection(uint8_t id, angle_rotation_direction_t *direction, unsigned long timeout = 100);
+    chain_status_t getAngleRotationDirection(uint8_t id, angle_rotation_direction_t *direction,
+                                             unsigned long timeout = 100);
 
 private:
 };

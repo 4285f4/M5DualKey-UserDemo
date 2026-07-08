@@ -898,8 +898,8 @@ static esp_err_t esp_ble_hidd_dev_input_set(void *devp, size_t index, size_t id,
         }
         WAIT_CB(dev);
     } else {
-        ESP_LOGE(TAG, "Indicate Not Enabled: %d", 0);
-        return ESP_FAIL;
+        ESP_LOGD(TAG, "Indicate Not Enabled for report id %d", (int)id);
+        return ESP_OK;
     }
     return ESP_OK;
 }

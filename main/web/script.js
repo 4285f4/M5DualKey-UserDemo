@@ -7,7 +7,7 @@ class LanguageManager {
         this.currentLanguage = localStorage.getItem('language') || 'zh';
         this.translations = {
             zh: {
-                title: 'DualKey 控制面板 v0.6',
+                title: 'DualKey 控制面板 v0.7',
                 connectionStatus: '连接状态:',
                 lastUpdate: '最后更新:',
                 online: '在线',
@@ -199,11 +199,85 @@ class LanguageManager {
                 chainPIR: 'Chain PIR',
                 chainSwitch: 'Chain Switch',
                 chainUART: 'Chain UART',
+                chainPedal: 'Chain Pedal',
+                chainMIC: 'Chain MIC',
+                chainBuzzer: 'Chain Buzzer',
+                chainServos: 'Unit 8Servos2Chain',
+                chainMono: 'Chain Mono',
+                chainRGB: 'Chain RGB',
+                chainENV: 'Chain ENV',
+                chainIMU: 'Chain IMU',
+                chainDLight: 'Chain DLight',
+                chainBusUnit: 'Unit ChainBus',
+                temperature: '温度',
+                humidity: '湿度',
+                pressure: '气压',
+                altitude: '海拔',
+                lux: '亮度',
+                accel: '加速度',
+                gyro: '陀螺仪',
+                servoAngle: '舵机角度',
+                dcVoltage: 'DC电压',
+                groveVoltage: 'Grove电压',
+                i2cAddrs: 'I2C地址',
+                scanI2C: '扫描I2C',
+                clearScreen: '清屏',
+                scrollText: '滚动文字',
+                scrollTextPlaceholder: '输入滚动文字',
+                playNote: '播放音符',
+                frequency: '频率(Hz)',
+                duration: '时长(ms)',
+                playTone: '播放',
+                drawPixel: '点击绘点',
+                servoChannel: '通道',
+                interactiveControl: '交互控制',
+                arrowKeys: '方向键',
+                mapWASD: '映射 WASD',
+                mapArrows: '映射方向键',
+                buzzerSingleNote: '单音符',
+                buzzerCustomTone: '自定义音调',
+                buzzerMelody: '内置音效',
+                dutyCycle: '占空比(%)',
+                stop: '停止',
+                loop: '循环',
+                playEffect: '播放音效',
+                pixelDraw: '点阵',
+                scroll: '滚动',
+                direction: '方向',
+                scrollMode: '模式',
+                scrollOnce: '一次',
+                scrollLoop: '循环',
+                scrollPingPong: '往返',
+                intervalMs: '间隔(ms)',
+                scrollColor: '颜色',
+                syncBusMono: '同步本总线所有 MONO',
+                syncBusRgb: '同步本总线所有 RGB',
+                highThreshold: '高阈值',
+                lowThreshold: '低阈值',
+                luxTooHigh: '过高触发',
+                luxTooLow: '过低触发',
+                triggerInterval: '触发间隔 (ms)',
+                micThreshold: '阈值 (ADC)',
+                aboveThreshold: '超过阈值',
+                belowThreshold: '低于阈值',
+                switchOnAction: '开关打开',
+                switchOffAction: '开关关闭',
+                personEnter: '人体进入',
+                personLeave: '人体离开',
+                scrollDirLeft: '左',
+                scrollDirRight: '右',
+                scrollDirUp: '上',
+                scrollDirDown: '下',
+                presetMario: 'Mario',
+                presetDoorbell: 'Doorbell',
+                presetScale: 'Scale',
+                presetAlarm: 'Alarm',
+                unknownFunction: '未知功能',
                 // 配对提示
                 pairingTip: '目前仅支持旧主机删除连接后才能与新设备配对',
             },
             en: {
-                title: 'DualKey Control Panel v0.6',
+                title: 'DualKey Control Panel v0.7',
                 connectionStatus: 'Connection Status:',
                 lastUpdate: 'Last Update:',
                 online: 'Online',
@@ -395,6 +469,80 @@ class LanguageManager {
                 chainPIR: 'Chain PIR',
                 chainSwitch: 'Chain Switch',
                 chainUART: 'Chain UART',
+                chainPedal: 'Chain Pedal',
+                chainMIC: 'Chain MIC',
+                chainBuzzer: 'Chain Buzzer',
+                chainServos: 'Unit 8Servos2Chain',
+                chainMono: 'Chain Mono',
+                chainRGB: 'Chain RGB',
+                chainENV: 'Chain ENV',
+                chainIMU: 'Chain IMU',
+                chainDLight: 'Chain DLight',
+                chainBusUnit: 'Unit ChainBus',
+                temperature: 'Temperature',
+                humidity: 'Humidity',
+                pressure: 'Pressure',
+                altitude: 'Altitude',
+                lux: 'Brightness',
+                accel: 'Accel',
+                gyro: 'Gyro',
+                servoAngle: 'Servo Angle',
+                dcVoltage: 'DC Voltage',
+                groveVoltage: 'Grove Voltage',
+                i2cAddrs: 'I2C Addresses',
+                scanI2C: 'Scan I2C',
+                clearScreen: 'Clear',
+                scrollText: 'Scroll Text',
+                scrollTextPlaceholder: 'Enter scroll text',
+                playNote: 'Play Note',
+                frequency: 'Frequency (Hz)',
+                duration: 'Duration (ms)',
+                playTone: 'Play',
+                drawPixel: 'Click to draw',
+                servoChannel: 'Channel',
+                interactiveControl: 'Interactive Control',
+                arrowKeys: 'Arrow Keys',
+                mapWASD: 'Map WASD',
+                mapArrows: 'Map Arrow Keys',
+                buzzerSingleNote: 'Single Note',
+                buzzerCustomTone: 'Custom Tone',
+                buzzerMelody: 'Sound Effects',
+                dutyCycle: 'Duty (%)',
+                stop: 'Stop',
+                loop: 'Loop',
+                playEffect: 'Play Effect',
+                pixelDraw: 'Pixel',
+                scroll: 'Scroll',
+                direction: 'Direction',
+                scrollMode: 'Mode',
+                scrollOnce: 'Once',
+                scrollLoop: 'Loop',
+                scrollPingPong: 'Ping-Pong',
+                intervalMs: 'Interval (ms)',
+                scrollColor: 'Color',
+                syncBusMono: 'Sync all MONO on bus',
+                syncBusRgb: 'Sync all RGB on bus',
+                highThreshold: 'High Threshold',
+                lowThreshold: 'Low Threshold',
+                luxTooHigh: 'Too Bright Action',
+                luxTooLow: 'Too Dark Action',
+                triggerInterval: 'Trigger Interval (ms)',
+                micThreshold: 'Threshold (ADC)',
+                aboveThreshold: 'Above Threshold',
+                belowThreshold: 'Below Threshold',
+                switchOnAction: 'Switch On',
+                switchOffAction: 'Switch Off',
+                personEnter: 'Person Detected',
+                personLeave: 'Person Left',
+                scrollDirLeft: 'Left',
+                scrollDirRight: 'Right',
+                scrollDirUp: 'Up',
+                scrollDirDown: 'Down',
+                presetMario: 'Mario',
+                presetDoorbell: 'Doorbell',
+                presetScale: 'Scale',
+                presetAlarm: 'Alarm',
+                unknownFunction: 'Unknown Function',
                 // 配对提示
                 pairingTip: 'Currently only supports pairing with new devices after the old host deletes the connection',
             }
@@ -612,10 +760,15 @@ class DualKeyController {
 
         // 修改设备数据刷新开关状态结构 - 使用设备ID作为key
         this.deviceRefreshEnabled = {
-            left: new Map(),    // key: deviceId, value: boolean
-            right: new Map()    // key: deviceId, value: boolean
+            left: new Map(),
+            right: new Map()
         };
+        this.panelState = new Map();
 
+        this.initHIDFunctionOptions();
+    }
+
+    initHIDFunctionOptions() {
         // HID功能选项硬编码数据（对应chain_bus_hid.h中的enum）
         this.hidFunctionOptions = [
             {value: 0, name: languageManager.getText('noFunction'), desc: languageManager.getText('noFunction')},
@@ -653,7 +806,9 @@ class DualKeyController {
             {value: 32, name: languageManager.getText('playPause'), desc: languageManager.getText('playPause')},
             {value: 33, name: languageManager.getText('nextTrack'), desc: languageManager.getText('nextTrack')},
             {value: 34, name: languageManager.getText('prevTrack'), desc: languageManager.getText('prevTrack')},
-            {value: 35, name: languageManager.getText('stopPlay'), desc: languageManager.getText('stopPlay')}
+            {value: 35, name: languageManager.getText('stopPlay'), desc: languageManager.getText('stopPlay')},
+            {value: 36, name: languageManager.getText('mapWASD'), desc: languageManager.getText('mapWASD')},
+            {value: 37, name: languageManager.getText('arrowKeys'), desc: languageManager.getText('mapArrows')}
         ];
 
         this.KeyHIDFunctionOptions = [
@@ -695,7 +850,10 @@ class DualKeyController {
         this.JoystickHIDFunctionOptions = [
             {value: 0, name: languageManager.getText('noFunction'), desc: languageManager.getText('noFunction')},
             {value: 18, name: languageManager.getText('mouseMove'), desc: languageManager.getText('mouseMove')},
+            {value: 36, name: languageManager.getText('mapWASD'), desc: languageManager.getText('mapWASD')},
+            {value: 37, name: languageManager.getText('arrowKeys'), desc: languageManager.getText('mapArrows')},
             {value: 23, name: languageManager.getText('mouseScrollVertical'), desc: languageManager.getText('mouseScrollVertical')},
+            {value: 26, name: languageManager.getText('mouseScrollHorizontal'), desc: languageManager.getText('mouseScrollHorizontal')},
         ];
 
         this.EncoderHIDFunctionOptions = [
@@ -794,8 +952,11 @@ class DualKeyController {
         // 处理设备列表
         const deviceContainer = document.getElementById(`${busName}BusDevices`);
         if (deviceContainer) {
-            // console.log(`${busName} Bus设备容器存在`);
-            
+            if (busData.device_count === 0 || busData.connected === false) {
+                deviceContainer.innerHTML = '';
+                this.deviceCache[busName].clear();
+            }
+
             // 处理设备离线检测
             if (busData.connected_device_ids && Array.isArray(busData.connected_device_ids)) {
                 this.removeOfflineDevices(busName, busData.connected_device_ids);
@@ -923,31 +1084,35 @@ class DualKeyController {
 
     // 刷新设备容器数据以更新翻译
     refreshDeviceContainers() {
-        // 刷新左Bus设备容器
-        const leftContainer = document.getElementById('leftBusDevices');
-        if (leftContainer) {
-            const leftDevices = Array.from(leftContainer.children).map(element => {
-                const deviceId = parseInt(element.getAttribute('data-device-id'));
-                return this.deviceCache.left.get(deviceId);
-            }).filter(device => device);
-            
-            if (leftDevices.length > 0) {
-                this.updateDeviceList('left', leftDevices);
-            }
-        }
-        
-        // 刷新右Bus设备容器
-        const rightContainer = document.getElementById('rightBusDevices');
-        if (rightContainer) {
-            const rightDevices = Array.from(rightContainer.children).map(element => {
-                const deviceId = parseInt(element.getAttribute('data-device-id'));
-                return this.deviceCache.right.get(deviceId);
-            }).filter(device => device);
-            
-            if (rightDevices.length > 0) {
-                this.updateDeviceList('right', rightDevices);
-            }
-        }
+        this.initHIDFunctionOptions();
+
+        ['left', 'right'].forEach(busName => {
+            const container = document.getElementById(`${busName}BusDevices`);
+            if (!container) return;
+
+            container.querySelectorAll('.device-item').forEach(element => {
+                const deviceId = parseInt(element.getAttribute('data-device-id'), 10);
+                const device = this.deviceCache[busName].get(deviceId);
+                if (!device) return;
+
+                const wasHIDExpanded = element.querySelector('.hid-config-content') &&
+                    !element.querySelector('.hid-config-content').classList.contains('hidden');
+                const refreshEnabled = this.deviceRefreshEnabled[busName].get(deviceId) !== false;
+                const supportsRGB = this.deviceSupportsRGB(device.type);
+
+                this.renderDeviceElementFull(element, device, busName, refreshEnabled, supportsRGB);
+                this.bindRefreshToggleEvents(element);
+
+                if (wasHIDExpanded) {
+                    const newConfigContent = element.querySelector('.hid-config-content');
+                    const toggleIcon = element.querySelector('.hid-config-toggle .toggle-icon');
+                    if (newConfigContent) {
+                        newConfigContent.classList.remove('hidden');
+                        if (toggleIcon) toggleIcon.textContent = '▲';
+                    }
+                }
+            });
+        });
     }
 
     updateDeviceCard(busName, deviceId, device) {
@@ -1051,25 +1216,75 @@ class DualKeyController {
 
     // 修复updateDeviceElement方法，确保内容正确显示
     updateDeviceElement(element, device) {
-        // 在更新前保存HID配置的展开状态
         const hidConfigContent = element.querySelector('.hid-config-content');
         const wasHIDExpanded = hidConfigContent && !hidConfigContent.classList.contains('hidden');
+        const existingControlPanel = element.querySelector('.device-control-panel');
 
-        // 检查设备是否支持RGB
-        const supportsRGB = this.deviceSupportsRGB(device.type);
-
-        // 获取当前设备的刷新状态
         const busContainer = element.closest('.bus-status');
         const isLeftBus = busContainer && busContainer.classList.contains('left-bus');
         const busName = isLeftBus ? 'left' : 'right';
         const deviceKey = element.getAttribute('data-device-key');
         const refreshEnabled = this.deviceRefreshEnabled[busName] && this.deviceRefreshEnabled[busName].get(deviceKey) !== false;
 
+        const supportsRGB = this.deviceSupportsRGB(device.type);
+        element.setAttribute('data-device-type', device.type);
+
+        const header = element.querySelector('.device-header');
+        if (!header) {
+            this.renderDeviceElementFull(element, device, busName, refreshEnabled, supportsRGB);
+        } else {
+            const updateTimeEl = element.querySelector('.last-update');
+            if (updateTimeEl) {
+                updateTimeEl.textContent = `${languageManager.getText('updateTime')}: ${this.formatUpdateTime(device.frontend_update_time)}`;
+            }
+            const detailsEl = element.querySelector('.device-details');
+            if (detailsEl) {
+                detailsEl.innerHTML = `
+                    <span class="last-update">${languageManager.getText('updateTime')}: ${this.formatUpdateTime(device.frontend_update_time)}</span>
+                    ${this.formatEventDisplay(device)}
+                    ${this.formatDeviceData(device)}
+                `;
+            }
+            if (!element.querySelector('.device-hid-config') && this.deviceSupportsHID(device.type)) {
+                const hidHtml = this.createHIDConfigControl(device, busName);
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = hidHtml;
+                const hidNode = wrapper.firstElementChild;
+                if (existingControlPanel) {
+                    existingControlPanel.before(hidNode);
+                } else {
+                    element.appendChild(hidNode);
+                }
+                this.bindHIDConfigEvents(element, device);
+            }
+            if (!existingControlPanel && this.deviceSupportsControlPanel(device.type)) {
+                const panelHtml = this.createDeviceControlPanel(device, busName);
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = panelHtml;
+                element.appendChild(wrapper.firstElementChild);
+                this.bindDeviceControlEvents(element, device, busName);
+            }
+        }
+
+        if (wasHIDExpanded) {
+            const newConfigContent = element.querySelector('.hid-config-content');
+            const toggleIcon = element.querySelector('.hid-config-toggle .toggle-icon');
+            if (newConfigContent) {
+                newConfigContent.classList.remove('hidden');
+                if (toggleIcon) toggleIcon.textContent = '▲';
+            }
+        }
+
+        this.bindRefreshToggleEvents(element);
+    }
+
+    renderDeviceElementFull(element, device, busName, refreshEnabled, supportsRGB) {
         const deviceDataHtml = this.formatDeviceData(device);
         const rgbControlHtml = supportsRGB ? this.createRGBControl(device) : '';
         const hidConfigHtml = this.deviceSupportsHID(device.type) ? this.createHIDConfigControl(device, busName) : '';
+        const controlPanelHtml = this.deviceSupportsControlPanel(device.type) ? this.createDeviceControlPanel(device, busName) : '';
 
-        const html = `
+        element.innerHTML = `
             <div class="device-header">
                 <div class="device-info-group">
                     <span class="device-id">ID: ${device.id}</span>
@@ -1092,41 +1307,18 @@ class DualKeyController {
             </div>
             ${rgbControlHtml}
             ${hidConfigHtml}
+            ${controlPanelHtml}
         `;
 
-        // 更新设备类型属性
-        element.setAttribute('data-device-type', device.type);
-        
-        // console.log(`更新设备元素内容:`, html);
-        element.innerHTML = html;
-        
-        // 重新绑定RGB控制事件
         if (supportsRGB) {
             this.bindRGBControlEvents(element, device);
         }
-        
-        // 绑定HID配置事件
         if (this.deviceSupportsHID(device.type)) {
             this.bindHIDConfigEvents(element, device);
-
-            // 如果之前HID配置是展开状态，则重新展开
-            if (wasHIDExpanded) {
-                const newConfigContent = element.querySelector('.hid-config-content');
-                const toggleButton = element.querySelector('.hid-config-toggle');
-                const toggleIcon = toggleButton ? toggleButton.querySelector('.toggle-icon') : null;
-
-                if (newConfigContent) {
-                    newConfigContent.classList.remove('hidden');
-                    if (toggleIcon) {
-                        toggleIcon.textContent = '▲';
-                    }
-                    // console.log(`设备 ${device.id} HID配置已重新展开`);
-                }
-            }
         }
-
-        // 绑定刷新开关事件
-        this.bindRefreshToggleEvents(element);
+        if (this.deviceSupportsControlPanel(device.type)) {
+            this.bindDeviceControlEvents(element, device, busName);
+        }
     }
 
     // 更新可视化元素（如果存在）
@@ -1145,14 +1337,20 @@ class DualKeyController {
     
     // 检查设备是否支持RGB
     deviceSupportsRGB(deviceType) {
-        const rgbSupportedTypes = ['KEY', 'PIR', 'SWITCH', 'JOYSTICK', 'ENCODER', 'TOF', 'ANGLE', 'UART'];
+        const rgbSupportedTypes = ['KEY', 'PIR', 'SWITCH', 'JOYSTICK', 'ENCODER', 'TOF', 'ANGLE', 'UART', 'CHAIN_BUS',
+            'PEDAL', 'MIC', 'BUZZER', 'ENV', 'IMU', 'DLIGHT'];
         return rgbSupportedTypes.includes(deviceType);
     }
 
     // 检查设备是否支持HID配置
     deviceSupportsHID(deviceType) {
-        const hidSupportedTypes = ['KEY', 'JOYSTICK', 'ENCODER', 'ANGLE'];
+        const hidSupportedTypes = ['KEY', 'JOYSTICK', 'ENCODER', 'ANGLE', 'PEDAL', 'MIC', 'SWITCH', 'PIR', 'DLIGHT'];
         return hidSupportedTypes.includes(deviceType);
+    }
+
+    deviceSupportsControlPanel(deviceType) {
+        const panelTypes = ['BUZZER', 'MONO', 'RGB', 'SERVOS', 'CHAIN_BUS'];
+        return panelTypes.includes(deviceType);
     }
     
     // 格式化设备数据显示
@@ -1198,6 +1396,53 @@ class DualKeyController {
                     dataHtml += `<span class="data-item">${languageManager.getText('switchCount')}: ${device.device_data.switch_count}</span>`;
                 }
                 break;
+
+            case 'PEDAL':
+                dataHtml += `<span class="data-item">${languageManager.getText('buttonStatus')}: ${device.device_data.button_status ? languageManager.getText('pressed') : languageManager.getText('released')}</span>`;
+                dataHtml += `<span class="data-item">${languageManager.getText('switchStatus')}: ${device.device_data.switch_status ? languageManager.getText('switchOn') : languageManager.getText('switchOff')}</span>`;
+                break;
+
+            case 'MIC':
+                dataHtml += `<span class="data-item">ADC: ${device.device_data.adc_value || 0}</span>`;
+                dataHtml += `<span class="data-item">Threshold: ${device.device_data.threshold || 0}</span>`;
+                break;
+
+            case 'ENV': {
+                const spaOk = device.device_data.spa_ok !== false;
+                const pressure = device.device_data.pressure || 0;
+                const altitude = device.device_data.altitude || 0;
+                const pressureStr = (!spaOk && pressure === 0) ? '--' : `${(pressure / 10).toFixed(1)} hPa`;
+                const altitudeStr = (!spaOk && altitude === 0) ? '--' : `${(altitude / 100).toFixed(2)} m`;
+                dataHtml += `<span class="data-item">${languageManager.getText('temperature')}: ${((device.device_data.temperature || 0) / 100).toFixed(1)}°C</span>`;
+                dataHtml += `<span class="data-item">${languageManager.getText('humidity')}: ${device.device_data.humidity || 0}%</span>`;
+                dataHtml += `<span class="data-item">${languageManager.getText('pressure')}: ${pressureStr}</span>`;
+                dataHtml += `<span class="data-item">${languageManager.getText('altitude')}: ${altitudeStr}</span>`;
+                break;
+            }
+
+            case 'IMU':
+                dataHtml += `<span class="data-item">${languageManager.getText('accel')}: ${device.device_data.ax}, ${device.device_data.ay}, ${device.device_data.az}</span>`;
+                dataHtml += `<span class="data-item">${languageManager.getText('gyro')}: ${device.device_data.gx}, ${device.device_data.gy}, ${device.device_data.gz}</span>`;
+                dataHtml += `<span class="data-item">${languageManager.getText('temperature')}: ${((device.device_data.temperature || 0) / 100).toFixed(1)}°C</span>`;
+                break;
+
+            case 'DLIGHT':
+                dataHtml += `<span class="data-item">${languageManager.getText('lux')}: ${device.device_data.lux || 0}</span>`;
+                break;
+
+            case 'SERVOS': {
+                const angles = device.device_data.angles || [];
+                dataHtml += `<span class="data-item">${languageManager.getText('servoAngle')}: ${angles.join(', ')}</span>`;
+                dataHtml += `<span class="data-item">${languageManager.getText('dcVoltage')}: ${device.device_data.dc_voltage || 0} mV</span>`;
+                dataHtml += `<span class="data-item">${languageManager.getText('groveVoltage')}: ${device.device_data.grove_voltage || 0} mV</span>`;
+                break;
+            }
+
+            case 'CHAIN_BUS': {
+                const addrs = device.device_data.i2c_addrs || [];
+                dataHtml += `<span class="data-item">${languageManager.getText('i2cAddrs')}: ${addrs.length ? addrs.map(a => '0x' + a.toString(16)).join(', ') : '-'}</span>`;
+                break;
+            }
                 
             default:
                 dataHtml += `<span class="data-item">${languageManager.getText('noData')}</span>`;
@@ -1256,6 +1501,21 @@ class DualKeyController {
             case 'ANGLE':
                 hidConfigHtml += this.createAngleHIDConfig(device);
                 break;
+            case 'PEDAL':
+                hidConfigHtml += this.createPedalHIDConfig(device);
+                break;
+            case 'MIC':
+                hidConfigHtml += this.createMicHIDConfig(device);
+                break;
+            case 'SWITCH':
+                hidConfigHtml += this.createSwitchHIDConfig(device);
+                break;
+            case 'DLIGHT':
+                hidConfigHtml += this.createDlightHIDConfig(device);
+                break;
+            case 'PIR':
+                hidConfigHtml += this.createPirHIDConfig(device);
+                break;
         }
 
         hidConfigHtml += `
@@ -1272,41 +1532,158 @@ class DualKeyController {
 
     // 创建KEY设备的HID配置
     createKeyHIDConfig(device) {
-        const config = device.hid_config;
+        const config = device.hid_config || {};
         return `
             <div class="hid-config-group">
                 <label>${languageManager.getText('singleClickFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.single_click)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.single_click ?? 1)}]</span>
                 <select class="hid-function-select" data-config-key="single_click">
-                    ${this.generateKeyHIDFunctionOptions(config.single_click)}
+                    ${this.generateKeyHIDFunctionOptions(config.single_click ?? 1)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('doubleClickFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.double_click)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.double_click ?? 2)}]</span>
                 <select class="hid-function-select" data-config-key="double_click">
-                    ${this.generateKeyHIDFunctionOptions(config.double_click)}
+                    ${this.generateKeyHIDFunctionOptions(config.double_click ?? 2)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('longPressFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.long_press)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.long_press ?? 6)}]</span>
                 <select class="hid-function-select" data-config-key="long_press">
-                    ${this.generateKeyHIDFunctionOptions(config.long_press)}
+                    ${this.generateKeyHIDFunctionOptions(config.long_press ?? 6)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('pressFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.press_down)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.press_down ?? 0)}]</span>
                 <select class="hid-function-select" data-config-key="press_down">
-                    ${this.generateKeyHIDFunctionOptions(config.press_down)}
+                    ${this.generateKeyHIDFunctionOptions(config.press_down ?? 0)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('releaseFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.press_release)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.press_release ?? 0)}]</span>
                 <select class="hid-function-select" data-config-key="press_release">
-                    ${this.generateKeyHIDFunctionOptions(config.press_release)}
+                    ${this.generateKeyHIDFunctionOptions(config.press_release ?? 0)}
+                </select>
+            </div>
+        `;
+    }
+
+    createPedalHIDConfig(device) {
+        const config = device.hid_config || {};
+        return `
+            <div class="hid-config-group">
+                <label>${languageManager.getText('singleClickFunction')}:</label>
+                <span class="current-config">[${this.getHIDFunctionName(config.single_click ?? 9)}]</span>
+                <select class="hid-function-select" data-config-key="single_click">
+                    ${this.generateKeyHIDFunctionOptions(config.single_click ?? 9)}
+                </select>
+            </div>
+            <div class="hid-config-group">
+                <label>${languageManager.getText('pressFunction')}:</label>
+                <span class="current-config">[${this.getHIDFunctionName(config.press_down ?? 14)}]</span>
+                <select class="hid-function-select" data-config-key="press_down">
+                    ${this.generateKeyHIDFunctionOptions(config.press_down ?? 14)}
+                </select>
+            </div>
+            <div class="hid-config-group">
+                <label>${languageManager.getText('releaseFunction')}:</label>
+                <span class="current-config">[${this.getHIDFunctionName(config.press_release ?? 15)}]</span>
+                <select class="hid-function-select" data-config-key="press_release">
+                    ${this.generateKeyHIDFunctionOptions(config.press_release ?? 15)}
+                </select>
+            </div>
+        `;
+    }
+
+    createMicHIDConfig(device) {
+        const config = device.hid_config || {};
+        const threshold = config.threshold ?? device.device_data?.threshold ?? 2000;
+        const interval = config.trigger_interval_ms ?? 500;
+        return `
+            <div class="hid-config-group">
+                <label>${languageManager.getText('micThreshold')}:</label>
+                <input type="number" class="mic-threshold-input" data-config-key="threshold" value="${threshold}" min="0" max="4095">
+            </div>
+            <div class="hid-config-group">
+                <label>${languageManager.getText('triggerInterval')}:</label>
+                <input type="number" class="mic-interval-input" data-config-key="trigger_interval_ms" value="${interval}" min="50" max="5000">
+            </div>
+            <div class="hid-config-group">
+                <label>${languageManager.getText('aboveThreshold')}:</label>
+                <select class="hid-function-select" data-config-key="high_threshold_func">
+                    ${this.generateKeyHIDFunctionOptions(config.high_threshold_func ?? 31)}
+                </select>
+            </div>
+            <div class="hid-config-group">
+                <label>${languageManager.getText('belowThreshold')}:</label>
+                <select class="hid-function-select" data-config-key="low_threshold_func">
+                    ${this.generateKeyHIDFunctionOptions(config.low_threshold_func ?? 0)}
+                </select>
+            </div>
+        `;
+    }
+
+    createSwitchHIDConfig(device) {
+        const config = device.hid_config || {};
+        return `
+            <div class="hid-config-group">
+                <label>${languageManager.getText('switchOnAction')}:</label>
+                <select class="hid-function-select" data-config-key="open_func">
+                    ${this.generateKeyHIDFunctionOptions(config.open_func ?? 31)}
+                </select>
+            </div>
+            <div class="hid-config-group">
+                <label>${languageManager.getText('switchOffAction')}:</label>
+                <select class="hid-function-select" data-config-key="close_func">
+                    ${this.generateKeyHIDFunctionOptions(config.close_func ?? 0)}
+                </select>
+            </div>
+        `;
+    }
+
+    createDlightHIDConfig(device) {
+        const config = device.hid_config || {};
+        return `
+            <div class="hid-config-group">
+                <label>${languageManager.getText('highThreshold')} (${languageManager.getText('lux')}):</label>
+                <input type="number" class="dlight-high-input" data-config-key="high_threshold" value="${config.high_threshold ?? 500}" min="0">
+            </div>
+            <div class="hid-config-group">
+                <label>${languageManager.getText('lowThreshold')} (${languageManager.getText('lux')}):</label>
+                <input type="number" class="dlight-low-input" data-config-key="low_threshold" value="${config.low_threshold ?? 100}" min="0">
+            </div>
+            <div class="hid-config-group">
+                <label>${languageManager.getText('luxTooHigh')}:</label>
+                <select class="hid-function-select" data-config-key="lux_high_func">
+                    ${this.generateKeyHIDFunctionOptions(config.lux_high_func ?? 31)}
+                </select>
+            </div>
+            <div class="hid-config-group">
+                <label>${languageManager.getText('luxTooLow')}:</label>
+                <select class="hid-function-select" data-config-key="lux_low_func">
+                    ${this.generateKeyHIDFunctionOptions(config.lux_low_func ?? 31)}
+                </select>
+            </div>
+        `;
+    }
+
+    createPirHIDConfig(device) {
+        const config = device.hid_config || {};
+        return `
+            <div class="hid-config-group">
+                <label>${languageManager.getText('personEnter')}:</label>
+                <select class="hid-function-select" data-config-key="person_come_func">
+                    ${this.generateKeyHIDFunctionOptions(config.person_come_func ?? 32)}
+                </select>
+            </div>
+            <div class="hid-config-group">
+                <label>${languageManager.getText('personLeave')}:</label>
+                <select class="hid-function-select" data-config-key="person_leave_func">
+                    ${this.generateKeyHIDFunctionOptions(config.person_leave_func ?? 0)}
                 </select>
             </div>
         `;
@@ -1314,7 +1691,7 @@ class DualKeyController {
 
     // 创建JOYSTICK设备的HID配置
     createJoystickHIDConfig(device, busName) {
-        const config = device.hid_config;
+        const config = device.hid_config || {};
         
         // 根据总线设置默认值：左边总线默认开启翻转，右边总线默认关闭翻转
         const defaultReverse = busName === 'left';
@@ -1323,44 +1700,44 @@ class DualKeyController {
         return `
             <div class="hid-config-group">
                 <label>${languageManager.getText('singleClickFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.single_click)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.single_click ?? 0)}]</span>
                 <select class="hid-function-select" data-config-key="single_click">
-                    ${this.generateKeyHIDFunctionOptions(config.single_click)}
+                    ${this.generateKeyHIDFunctionOptions(config.single_click ?? 0)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('doubleClickFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.double_click)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.double_click ?? 0)}]</span>
                 <select class="hid-function-select" data-config-key="double_click">
-                    ${this.generateKeyHIDFunctionOptions(config.double_click)}
+                    ${this.generateKeyHIDFunctionOptions(config.double_click ?? 0)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('longPressFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.long_press)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.long_press ?? 0)}]</span>
                 <select class="hid-function-select" data-config-key="long_press">
-                    ${this.generateKeyHIDFunctionOptions(config.long_press)}
+                    ${this.generateKeyHIDFunctionOptions(config.long_press ?? 0)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('pressFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.press_down)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.press_down ?? 16)}]</span>
                 <select class="hid-function-select" data-config-key="press_down">
-                    ${this.generateKeyHIDFunctionOptions(config.press_down)}
+                    ${this.generateKeyHIDFunctionOptions(config.press_down ?? 16)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('releaseFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.press_release)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.press_release ?? 17)}]</span>
                 <select class="hid-function-select" data-config-key="press_release">
-                    ${this.generateKeyHIDFunctionOptions(config.press_release)}
+                    ${this.generateKeyHIDFunctionOptions(config.press_release ?? 17)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('xyMoveFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.xy_move_func)}]</span>
+                <span class="current-config">[${this.getJoystickHIDFunctionName(config.xy_move_func)}]</span>
                 <select class="hid-function-select" data-config-key="xy_move_func">
-                    ${this.generateJoystickHIDFunctionOptions(config.xy_move_func)}
+                    ${this.generateJoystickHIDFunctionOptions(config.xy_move_func ?? 18)}
                 </select>
             </div>
             <div class="hid-config-group">
@@ -1376,55 +1753,55 @@ class DualKeyController {
 
     // 创建ENCODER设备的HID配置
     createEncoderHIDConfig(device) {
-        const config = device.hid_config;
+        const config = device.hid_config || {};
         return `
             <div class="hid-config-group">
                 <label>${languageManager.getText('singleClickFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.single_click)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.single_click ?? 0)}]</span>
                 <select class="hid-function-select" data-config-key="single_click">
-                    ${this.generateKeyHIDFunctionOptions(config.single_click)}
+                    ${this.generateKeyHIDFunctionOptions(config.single_click ?? 0)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('doubleClickFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.double_click)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.double_click ?? 0)}]</span>
                 <select class="hid-function-select" data-config-key="double_click">
-                    ${this.generateKeyHIDFunctionOptions(config.double_click)}
+                    ${this.generateKeyHIDFunctionOptions(config.double_click ?? 0)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('longPressFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.long_press)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.long_press ?? 0)}]</span>
                 <select class="hid-function-select" data-config-key="long_press">
-                    ${this.generateKeyHIDFunctionOptions(config.long_press)}
+                    ${this.generateKeyHIDFunctionOptions(config.long_press ?? 0)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('pressFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.press_down)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.press_down ?? 14)}]</span>
                 <select class="hid-function-select" data-config-key="press_down">
-                    ${this.generateKeyHIDFunctionOptions(config.press_down)}
+                    ${this.generateKeyHIDFunctionOptions(config.press_down ?? 14)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('releaseFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.press_release)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.press_release ?? 15)}]</span>
                 <select class="hid-function-select" data-config-key="press_release">
-                    ${this.generateKeyHIDFunctionOptions(config.press_release)}
+                    ${this.generateKeyHIDFunctionOptions(config.press_release ?? 15)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('rotateClockwiseFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.rotate_cw_func)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.rotate_cw_func ?? 23)}]</span>
                 <select class="hid-function-select" data-config-key="rotate_cw_func">
-                    ${this.generateEncoderHIDFunctionOptions(config.rotate_cw_func)}
+                    ${this.generateEncoderHIDFunctionOptions(config.rotate_cw_func ?? 23)}
                 </select>
             </div>
             <div class="hid-config-group">
                 <label>${languageManager.getText('rotateCounterClockwiseFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.rotate_ccw_func)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.rotate_ccw_func ?? 23)}]</span>
                 <select class="hid-function-select" data-config-key="rotate_ccw_func">
-                    ${this.generateEncoderHIDFunctionOptions(config.rotate_ccw_func)}
+                    ${this.generateEncoderHIDFunctionOptions(config.rotate_ccw_func ?? 23)}
                 </select>
             </div>
         `;
@@ -1432,13 +1809,13 @@ class DualKeyController {
 
     // 创建ANGLE设备的HID配置
     createAngleHIDConfig(device) {
-        const config = device.hid_config;
+        const config = device.hid_config || {};
         return `
             <div class="hid-config-group">
                 <label>${languageManager.getText('angleChangeFunction')}:</label>
-                <span class="current-config">[${this.getHIDFunctionName(config.angle_func)}]</span>
+                <span class="current-config">[${this.getHIDFunctionName(config.angle_func ?? 23)}]</span>
                 <select class="hid-function-select" data-config-key="angle_func">
-                    ${this.generateAngleHIDFunctionOptions(config.angle_func)}
+                    ${this.generateAngleHIDFunctionOptions(config.angle_func ?? 23)}
                 </select>
             </div>
         `;
@@ -1487,10 +1864,301 @@ class DualKeyController {
 
     // 获取HID功能名称
     getHIDFunctionName(value) {
-        const option = this.hidFunctionOptions.find(opt => opt.value === value);
-        return option ? option.name : '未知功能';
+        const numericValue = Number(value);
+        const sources = [
+            this.hidFunctionOptions,
+            this.JoystickHIDFunctionOptions,
+            this.EncoderHIDFunctionOptions,
+            this.AngleHIDFunctionOptions,
+            this.KeyHIDFunctionOptions
+        ];
+        for (const options of sources) {
+            const option = options.find(opt => opt.value === numericValue);
+            if (option) {
+                return option.name;
+            }
+        }
+        return languageManager.getText('unknownFunction') || '未知功能';
+    }
+
+    getJoystickHIDFunctionName(value) {
+        const numericValue = Number(value ?? 18);
+        const option = this.JoystickHIDFunctionOptions.find(opt => opt.value === numericValue);
+        return option ? option.name : this.getHIDFunctionName(numericValue);
     }
     
+    // 创建设备交互控制面板
+    createDeviceControlPanel(device, busName) {
+        let panel = `<div class="device-control-panel" data-bus="${busName}" data-device-id="${device.id}">`;
+        panel += `<h4>${languageManager.getText('interactiveControl')}</h4>`;
+
+        switch (device.type) {
+            case 'BUZZER':
+                panel += this.createBuzzerControlPanel(device);
+                break;
+            case 'MONO':
+                panel += this.createMatrixControlPanel(device, 'mono');
+                break;
+            case 'RGB':
+                panel += this.createMatrixControlPanel(device, 'rgb');
+                break;
+            case 'SERVOS':
+                panel += this.createServoControlPanel(device);
+                break;
+            case 'CHAIN_BUS':
+                panel += `<button class="ctrl-btn i2c-scan-btn">${languageManager.getText('scanI2C')}</button>`;
+                break;
+        }
+        panel += '</div>';
+        return panel;
+    }
+
+    createBuzzerControlPanel(device) {
+        const notes = [
+            { n: 'C4', v: 13 }, { n: 'D4', v: 15 }, { n: 'E4', v: 17 }, { n: 'F4', v: 18 },
+            { n: 'G4', v: 20 }, { n: 'A4', v: 22 }, { n: 'B4', v: 24 }, { n: 'C5', v: 25 },
+            { n: 'Rest', v: 0 }
+        ];
+        const keys = notes.map(note =>
+            `<button type="button" class="ctrl-btn note-btn" data-note="${note.v}">${note.n}</button>`
+        ).join('');
+        const presetKeys = ['presetMario', 'presetDoorbell', 'presetScale', 'presetAlarm'];
+        const presets = presetKeys.map((key, i) =>
+            `<option value="${i}">${languageManager.getText(key)}</option>`
+        ).join('');
+        return `
+            <div class="buzzer-tabs">
+                <button type="button" class="buzzer-tab active" data-tab="note">${languageManager.getText('buzzerSingleNote')}</button>
+                <button type="button" class="buzzer-tab" data-tab="tone">${languageManager.getText('buzzerCustomTone')}</button>
+                <button type="button" class="buzzer-tab" data-tab="seq">${languageManager.getText('buzzerMelody')}</button>
+            </div>
+            <div class="buzzer-tab-panel buzzer-tab-note">
+                <div class="buzzer-keys">${keys}</div>
+            </div>
+            <div class="buzzer-tab-panel buzzer-tab-tone hidden">
+                <div class="buzzer-tone-row">
+                    <label>${languageManager.getText('frequency')}</label>
+                    <input type="number" class="buzzer-freq" value="1000" min="100" max="10000">
+                    <label>${languageManager.getText('dutyCycle')}</label>
+                    <input type="number" class="buzzer-duty" value="50" min="1" max="100">
+                    <label>${languageManager.getText('duration')}</label>
+                    <input type="number" class="buzzer-duration" value="300" min="50" max="5000">
+                    <button type="button" class="ctrl-btn buzzer-play-btn">${languageManager.getText('playTone')}</button>
+                </div>
+            </div>
+            <div class="buzzer-tab-panel buzzer-tab-seq hidden">
+                <div class="buzzer-seq-controls">
+                    <select class="buzzer-seq-preset">${presets}</select>
+                    <label><input type="checkbox" class="buzzer-seq-loop"> ${languageManager.getText('loop')}</label>
+                    <button type="button" class="ctrl-btn buzzer-seq-play">${languageManager.getText('playEffect')}</button>
+                </div>
+            </div>
+            <button type="button" class="ctrl-btn buzzer-global-stop">${languageManager.getText('stop')}</button>
+        `;
+    }
+
+    createMatrixControlPanel(device, mode) {
+        let grid = '';
+        for (let y = 0; y < 8; y++) {
+            for (let x = 0; x < 8; x++) {
+                grid += `<div class="matrix-cell" data-x="${x}" data-y="${y}"></div>`;
+            }
+        }
+        const colorPicker = mode === 'rgb'
+            ? `<label>${languageManager.getText('scrollColor')}</label><input type="color" class="matrix-color" value="#ff0000">`
+            : '';
+        const scrollColorPicker = mode === 'rgb'
+            ? `<label>${languageManager.getText('scrollColor')}</label><input type="color" class="matrix-scroll-color" value="#ff0000">`
+            : '';
+        const syncLabel = mode === 'mono'
+            ? languageManager.getText('syncBusMono')
+            : languageManager.getText('syncBusRgb');
+        return `
+            <div class="matrix-tabs">
+                <button type="button" class="matrix-tab active" data-tab="draw">${languageManager.getText('pixelDraw')}</button>
+                <button type="button" class="matrix-tab" data-tab="scroll">${languageManager.getText('scroll')}</button>
+            </div>
+            <div class="matrix-tab-panel matrix-tab-draw">
+                <div class="matrix-grid ${mode}-grid" data-mode="${mode}">${grid}</div>
+                ${colorPicker}
+                <div class="matrix-actions">
+                    <button type="button" class="ctrl-btn matrix-clear-btn">${languageManager.getText('clearScreen')}</button>
+                </div>
+                <p class="matrix-hint">${languageManager.getText('drawPixel')}</p>
+            </div>
+            <div class="matrix-tab-panel matrix-tab-scroll hidden">
+                <input type="text" class="matrix-scroll-text" placeholder="${languageManager.getText('scrollTextPlaceholder')}" value="Hello World!  ">
+                <label>${languageManager.getText('direction')}</label>
+                <select class="matrix-scroll-dir">
+                    <option value="0">${languageManager.getText('scrollDirLeft')}</option>
+                    <option value="1">${languageManager.getText('scrollDirRight')}</option>
+                    <option value="2">${languageManager.getText('scrollDirUp')}</option>
+                    <option value="3">${languageManager.getText('scrollDirDown')}</option>
+                </select>
+                <label>${languageManager.getText('scrollMode')}</label>
+                <select class="matrix-scroll-mode">
+                    <option value="0">${languageManager.getText('scrollOnce')}</option>
+                    <option value="1" selected>${languageManager.getText('scrollLoop')}</option>
+                    <option value="2">${languageManager.getText('scrollPingPong')}</option>
+                </select>
+                <label>${languageManager.getText('intervalMs')}</label>
+                <input type="number" class="matrix-scroll-interval" value="120" min="50" max="2000">
+                ${scrollColorPicker}
+                <label><input type="checkbox" class="matrix-scroll-sync"> ${syncLabel}</label>
+                <button type="button" class="ctrl-btn matrix-scroll-btn">${languageManager.getText('scrollText')}</button>
+            </div>
+        `;
+    }
+
+    createServoControlPanel(device) {
+        const angles = device.device_data?.angles || [90, 90, 90, 90, 90, 90, 90, 90];
+        let sliders = '';
+        for (let i = 0; i < 8; i++) {
+            const angle = angles[i] ?? 90;
+            sliders += `
+                <div class="servo-row">
+                    <label>${languageManager.getText('servoChannel')} ${i}</label>
+                    <input type="range" class="servo-slider" data-gpio="${i}" min="0" max="180" value="${angle}">
+                    <span class="servo-value">${angle}°</span>
+                </div>`;
+        }
+        return `<div class="servo-panel">${sliders}</div>`;
+    }
+
+    bindDeviceControlEvents(element, device, busName) {
+        const panel = element.querySelector('.device-control-panel');
+        if (!panel || panel.dataset.bound === '1') return;
+        panel.dataset.bound = '1';
+
+        panel.querySelectorAll('.buzzer-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                panel.querySelectorAll('.buzzer-tab').forEach(t => t.classList.remove('active'));
+                panel.querySelectorAll('.buzzer-tab-panel').forEach(p => p.classList.add('hidden'));
+                tab.classList.add('active');
+                const target = panel.querySelector(`.buzzer-tab-${tab.dataset.tab}`);
+                if (target) target.classList.remove('hidden');
+            });
+        });
+
+        panel.querySelectorAll('.note-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const note = parseInt(btn.dataset.note, 10);
+                this.sendDeviceCommand('buzzer_play', busName, device.id, { note, duration: 300 });
+            });
+        });
+
+        const playBtn = panel.querySelector('.buzzer-play-btn');
+        if (playBtn) {
+            playBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const freq = parseInt(panel.querySelector('.buzzer-freq')?.value || '1000', 10);
+                const duty = parseInt(panel.querySelector('.buzzer-duty')?.value || '50', 10);
+                const duration = parseInt(panel.querySelector('.buzzer-duration')?.value || '300', 10);
+                this.sendDeviceCommand('buzzer_play', busName, device.id, { freq, duty, duration });
+            });
+        }
+
+        panel.querySelector('.buzzer-seq-play')?.addEventListener('click', () => {
+            const preset = parseInt(panel.querySelector('.buzzer-seq-preset')?.value || '0', 10);
+            const loop = panel.querySelector('.buzzer-seq-loop')?.checked ?? false;
+            this.sendDeviceCommand('buzzer_seq_play', busName, device.id, { preset, loop });
+        });
+        panel.querySelector('.buzzer-global-stop')?.addEventListener('click', () => {
+            this.sendDeviceCommand('buzzer_seq_stop', busName, device.id, {});
+            this.sendDeviceCommand('buzzer_stop', busName, device.id, {});
+        });
+
+        const grid = panel.querySelector('.matrix-grid');
+        const matrixMode = grid?.dataset.mode;
+
+        panel.querySelectorAll('.matrix-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                panel.querySelectorAll('.matrix-tab').forEach(t => t.classList.remove('active'));
+                panel.querySelectorAll('.matrix-tab-panel').forEach(p => p.classList.add('hidden'));
+                tab.classList.add('active');
+                const target = panel.querySelector(`.matrix-tab-${tab.dataset.tab}`);
+                if (target) {
+                    target.classList.remove('hidden');
+                    if (tab.dataset.tab === 'draw' && matrixMode === 'mono') {
+                        this.sendDeviceCommand('mono_clear', busName, device.id, {});
+                    }
+                }
+            });
+        });
+
+        if (grid) {
+            const mode = grid.dataset.mode;
+            grid.querySelectorAll('.matrix-cell').forEach(cell => {
+                cell.addEventListener('click', () => {
+                    const x = parseInt(cell.dataset.x, 10);
+                    const y = parseInt(cell.dataset.y, 10);
+                    if (mode === 'mono') {
+                        cell.classList.toggle('on');
+                        this.sendDeviceCommand('mono_draw', busName, device.id, { x, y, state: cell.classList.contains('on') });
+                    } else {
+                        const colorHex = panel.querySelector('.matrix-color')?.value || '#ff0000';
+                        const rgb565 = this.hexToRgb565(colorHex);
+                        cell.style.backgroundColor = colorHex;
+                        this.sendDeviceCommand('rgb_draw', busName, device.id, { x, y, color: rgb565 });
+                    }
+                });
+            });
+            panel.querySelector('.matrix-clear-btn')?.addEventListener('click', () => {
+                grid.querySelectorAll('.matrix-cell').forEach(c => {
+                    c.classList.remove('on');
+                    c.style.backgroundColor = '';
+                });
+                this.sendDeviceCommand(mode === 'mono' ? 'mono_clear' : 'rgb_clear', busName, device.id, {});
+            });
+            panel.querySelector('.matrix-scroll-btn')?.addEventListener('click', () => {
+                const text = panel.querySelector('.matrix-scroll-text')?.value || 'M5Stack';
+                const dir = parseInt(panel.querySelector('.matrix-scroll-dir')?.value || '0', 10);
+                const scrollMode = parseInt(panel.querySelector('.matrix-scroll-mode')?.value || '1', 10);
+                const interval = parseInt(panel.querySelector('.matrix-scroll-interval')?.value || '120', 10);
+                const syncAll = panel.querySelector('.matrix-scroll-sync')?.checked ?? false;
+                const payload = { text, dir, mode: scrollMode, interval };
+                if (mode === 'rgb') {
+                    const colorEl = panel.querySelector('.matrix-scroll-color') || panel.querySelector('.matrix-color');
+                    payload.color = this.hexToRgb565(colorEl?.value || '#ff0000');
+                }
+                let cmd = mode === 'mono' ? 'mono_scroll' : 'rgb_scroll';
+                if (syncAll) {
+                    cmd = mode === 'mono' ? 'mono_scroll_all' : 'rgb_scroll_all';
+                }
+                this.sendDeviceCommand(cmd, busName, device.id, payload);
+            });
+        }
+
+        panel.querySelectorAll('.servo-slider').forEach(slider => {
+            slider.addEventListener('input', () => {
+                const valSpan = slider.parentElement.querySelector('.servo-value');
+                if (valSpan) valSpan.textContent = `${slider.value}°`;
+            });
+            slider.addEventListener('change', () => {
+                this.sendDeviceCommand('servo_set_angle', busName, device.id, {
+                    gpio: parseInt(slider.dataset.gpio, 10),
+                    angle: parseInt(slider.value, 10)
+                });
+            });
+        });
+
+        panel.querySelector('.i2c-scan-btn')?.addEventListener('click', () => {
+            this.sendDeviceCommand('unitbus_i2c_scan', busName, device.id, {});
+        });
+    }
+
+    sendDeviceCommand(type, busName, deviceId, params) {
+        this.sendMessage({ type, bus: busName, device_id: deviceId, ...params });
+    }
+
+    hexToRgb565(hex) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+    }
+
     // 绑定RGB控制事件
     bindRGBControlEvents(element, device) {
         const colorPicker = element.querySelector('.device-color-picker');
@@ -1593,11 +2261,33 @@ class DualKeyController {
             const key = checkbox.getAttribute('data-config-key');
             config[key] = checkbox.checked;
         });
-        
-        // console.log(`应用设备 ${device.id} HID配置:`, config);
+
+        element.querySelectorAll('input[data-config-key]').forEach(input => {
+            const key = input.getAttribute('data-config-key');
+            config[key] = parseInt(input.value, 10);
+        });
         
         // 发送配置到后端
         this.sendHIDConfig(busName, device.id, config);
+
+        if (device.type === 'MIC') {
+            this.sendMessage({
+                type: 'set_mic_config',
+                bus: busName,
+                device_id: device.id,
+                threshold: config.threshold,
+                trigger_interval_ms: config.trigger_interval_ms
+            });
+        }
+        if (device.type === 'DLIGHT') {
+            this.sendMessage({
+                type: 'set_dlight_config',
+                bus: busName,
+                device_id: device.id,
+                high_threshold: config.high_threshold,
+                low_threshold: config.low_threshold
+            });
+        }
     }
 
     // 发送HID配置到后端
@@ -1808,13 +2498,13 @@ class DualKeyController {
     
     // 移除离线设备
     removeOfflineDevices(busName, connectedDeviceIds) {
-        const connectedIdSet = new Set(connectedDeviceIds);
+        const connectedIdSet = new Set(connectedDeviceIds.map(id => Number(id)));
         console.log(`${busName} Bus当前连接的设备ID:`, connectedDeviceIds);
     
         // 检查缓存中的设备，移除不在连接列表中的设备
         const devicesToRemove = [];
         this.deviceCache[busName].forEach((device, deviceId) => {
-            if (!connectedIdSet.has(deviceId)) {
+            if (!connectedIdSet.has(Number(deviceId))) {
                 console.log(`设备 ${deviceId} 已离线，准备移除`);
                 devicesToRemove.push(deviceId);
             }
@@ -3748,9 +4438,19 @@ class DualKeyController {
             'ENCODER': 'Chain_Encoder.jpg',
             'ANGLE': 'Chain_Angle.jpg',
             'TOF': 'Chain_ToF.jpg',
-            'PIR': 'Chain_Blank.jpg',
-            'SWITCH': 'Chain_Blank.jpg',
-            'UART': 'Chain_Blank.jpg'
+            'PIR': 'Chain_PIR.jpg',
+            'SWITCH': 'Chain_Switch.jpg',
+            'UART': 'Chain_Uart.jpg',
+            'CHAIN_BUS': 'Chain_Blank.jpg',
+            'PEDAL': 'Chain_Blank.jpg',
+            'MIC': 'Chain_MIC.jpg',
+            'BUZZER': 'Chain_Buzzer.jpg',
+            'SERVOS': 'Chain_8Servos-2.jpg',
+            'MONO': 'Chain_Mono.jpg',
+            'RGB': 'Chain_RGB.jpg',
+            'ENV': 'Chain_ENV.jpg',
+            'IMU': 'Chain_IMU.jpg',
+            'DLIGHT': 'Chain_DLight.jpg',
         };
 
         return imageMap[deviceType] || 'Chain_Blank.jpg';
@@ -3766,7 +4466,17 @@ class DualKeyController {
             'TOF': languageManager.getText('chainToF'),
             'PIR': languageManager.getText('chainPIR'),
             'SWITCH': languageManager.getText('chainSwitch'),
-            'UART': languageManager.getText('chainUART')
+            'UART': languageManager.getText('chainUART'),
+            'CHAIN_BUS': languageManager.getText('chainBusUnit'),
+            'PEDAL': languageManager.getText('chainPedal'),
+            'MIC': languageManager.getText('chainMIC'),
+            'BUZZER': languageManager.getText('chainBuzzer'),
+            'SERVOS': languageManager.getText('chainServos'),
+            'MONO': languageManager.getText('chainMono'),
+            'RGB': languageManager.getText('chainRGB'),
+            'ENV': languageManager.getText('chainENV'),
+            'IMU': languageManager.getText('chainIMU'),
+            'DLIGHT': languageManager.getText('chainDLight'),
         };
 
         return nameMap[deviceType] || deviceType;

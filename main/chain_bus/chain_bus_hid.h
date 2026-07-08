@@ -58,6 +58,10 @@ typedef enum {
     HID_FUNC_MEDIA_PREV,        // 上一首
     HID_FUNC_MEDIA_STOP,        // 停止
 
+    // 摇杆键盘映射
+    HID_FUNC_JOYSTICK_WASD,    // 摇杆映射 WASD
+    HID_FUNC_JOYSTICK_ARROWS,  // 摇杆映射方向键
+
     HID_FUNC_MAX
 } hid_func_type_t;
 
@@ -162,6 +166,19 @@ const hid_func_desc_t* chain_bus_hid_get_all_functions(size_t* count);
  * @return esp_err_t ESP_OK 成功
  */
 esp_err_t chain_bus_hid_update_mouse_movement(int16_t x, int16_t y, uint8_t buttons, int8_t wheel, int8_t pan);
+
+/**
+ * @brief 摇杆八方向键盘映射（WASD 或方向键）
+ * @param func_type HID_FUNC_JOYSTICK_WASD 或 HID_FUNC_JOYSTICK_ARROWS
+ * @param x 摇杆 X (-127..127)
+ * @param y 摇杆 Y (-127..127)
+ */
+esp_err_t chain_bus_hid_update_joystick_keys(hid_func_type_t func_type, int8_t x, int8_t y);
+
+/**
+ * @brief 摇杆速度模式鼠标增量（绕过平滑中枢，每轮 poll 直接上报）
+ */
+esp_err_t chain_bus_hid_send_mouse_delta(int8_t dx, int8_t dy);
 
 #ifdef __cplusplus
 }

@@ -1,10 +1,10 @@
 /*
- * SPDX-FileCopyrightText: 2025 M5Stack Technology CO LTD
+ * SPDX-FileCopyrightText: 2026 M5Stack Technology CO LTD
  *
  * SPDX-License-Identifier: MIT
  */
 
-#include "ChainPedal.hpp"
+#include "ChainPedal/ChainPedal.hpp"
 
 chain_status_t ChainPedal ::getPedalButtonStatus(uint8_t id, uint8_t *buttonStatus, unsigned long timeout)
 {

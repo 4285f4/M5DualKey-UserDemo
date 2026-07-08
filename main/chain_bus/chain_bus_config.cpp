@@ -44,8 +44,8 @@ void chain_bus_uid_to_string(const uint8_t* uid, char* str_buf)
 // 生成NVS键名
 static void generate_nvs_key(const uint8_t* uid, char* key_buf)
 {
-    // 使用UID的前6字节生成 12 字符的键名
-    sprintf(key_buf, "c_%02X%02X%02X%02X%02X%02X", uid[0], uid[1], uid[2], uid[3], uid[4], uid[5]);
+    uint32_t hash = esp_crc32_le(0, uid, CHAIN_UID_SIZE);
+    sprintf(key_buf, "c_%08X", (unsigned int)hash);
 }
 
 // 计算配置的CRC32
