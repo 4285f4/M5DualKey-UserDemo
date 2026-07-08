@@ -4,7 +4,7 @@
  *SPDX-License-Identifier: MIT
  */
 
-#include "ChainEncoder.hpp"
+#include "ChainEncoder/ChainEncoder.hpp"
 
 chain_status_t ChainEncoder::getEncoderValue(uint8_t id, int16_t *value, unsigned long timeout)
 {
@@ -107,7 +107,6 @@ chain_status_t ChainEncoder::setEncoderABDirect(uint8_t id, encoder_ab_t direct,
 {
     chain_status_t status = CHAIN_OK;
 
-
     if (acquireMutex()) {
         cmdBufferSize              = 0;
         cmdBuffer[cmdBufferSize++] = direct;
@@ -178,8 +177,8 @@ chain_status_t ChainEncoder::getEncoderButtonStatus(uint8_t id, uint8_t *buttonS
 }
 
 chain_status_t ChainEncoder::setEncoderButtonTriggerInterval(uint8_t id, button_double_click_time_t doubleClickTimeout,
-                                                            button_long_press_time_t longPressTimeout, uint8_t *operationStatus,
-                                                            unsigned long timeout)
+                                                             button_long_press_time_t longPressTimeout,
+                                                             uint8_t *operationStatus, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -206,7 +205,8 @@ chain_status_t ChainEncoder::setEncoderButtonTriggerInterval(uint8_t id, button_
 }
 
 chain_status_t ChainEncoder::getEncoderButtonTriggerInterval(uint8_t id, button_double_click_time_t *doubleClickTimeout,
-                                                            button_long_press_time_t *longPressTimeout, unsigned long timeout)
+                                                             button_long_press_time_t *longPressTimeout,
+                                                             unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 

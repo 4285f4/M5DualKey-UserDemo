@@ -19,10 +19,50 @@ static const char* bus_names[]   = {"LEFT", "RIGHT"};
 
 extern QueueHandle_t status_refresh_queue;
 
+static int8_t chain_bus_joystick_axis_delta(int8_t axis, int8_t deadzone, uint8_t divisor)
+{
+    if (divisor == 0) {
+        divisor = 1;
+    }
+    if (abs(axis) <= deadzone) {
+        return 0;
+    }
+    int16_t scaled = (int16_t)axis / (int16_t)divisor;
+    if (scaled == 0) {
+        scaled = (axis > 0) ? 1 : -1;
+    }
+    return (int8_t)scaled;
+}
+
 typedef enum {
     STATUS_REFRESH_NORMAL,    // 正常刷新
     STATUS_REFRESH_IMMEDIATE  // 立即刷新
 } status_refresh_type_t;
+
+static void chain_bus_clear_bus_devices(int bus_idx)
+{
+    chain_bus_status_t* status = &bus_status[bus_idx];
+    if (status->device_list) {
+        if (status->device_list->devices) {
+            free(status->device_list->devices);
+        }
+        free(status->device_list);
+        status->device_list = NULL;
+    }
+    if (status->device_status) {
+        free(status->device_status);
+        status->device_status = NULL;
+    }
+    status->device_count = 0;
+}
+
+static void chain_bus_request_status_refresh(void)
+{
+    if (status_refresh_queue) {
+        status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+        xQueueSend(status_refresh_queue, &refresh_msg, 0);
+    }
+}
 
 // 获取设备类型名称
 const char* chain_device_type_name(chain_device_type_t type)
@@ -38,8 +78,6 @@ const char* chain_device_type_name(chain_device_type_t type)
             return "JOYSTICK";
         case CHAIN_TOF_TYPE_CODE:
             return "TOF";
-        case CHAIN_UART_TYPE_CODE:
-            return "UART";
         case CHAIN_SWITCH_TYPE_CODE:
             return "SWITCH";
         case CHAIN_PEDAL_TYPE_CODE:
@@ -48,6 +86,22 @@ const char* chain_device_type_name(chain_device_type_t type)
             return "MIC";
         case CHAIN_PIR_TYPE_CODE:
             return "PIR";
+        case UNIT_CHAIN_BUS_TYPE_CODE:
+            return "CHAIN_BUS";
+        case CHAIN_BUZZER_TYPE_CODE:
+            return "BUZZER";
+        case UNIT_8SERVOS2_CHAIN_TYPE_CODE:
+            return "SERVOS";
+        case CHAIN_MONO_TYPE_CODE:
+            return "MONO";
+        case CHAIN_RGB_TYPE_CODE:
+            return "RGB";
+        case CHAIN_ENV_TYPE_CODE:
+            return "ENV";
+        case CHAIN_IMU_TYPE_CODE:
+            return "IMU";
+        case CHAIN_DLight_TYPE_CODE:
+            return "DLIGHT";
         default:
             return "UNKNOWN";
     }
@@ -58,26 +112,14 @@ void chain_bus_scan_single(int bus_idx)
 {
     Chain* chain               = chains[bus_idx];
     chain_bus_status_t* status = &bus_status[bus_idx];
-
-    // ESP_LOGI(TAG, "[%s] 开始扫描设备...", bus_names[bus_idx]);
+    uint16_t prev_count        = status->device_count;
 
     // 检查设备连接
     if (!chain->isDeviceConnected(3, CHAIN_BUS_DEVICE_TIMEOUT_MS)) {
-        // ESP_LOGW(TAG, "[%s] 未检测到设备连接", bus_names[bus_idx]);
-
-        // 清理旧的设备列表
-        if (status->device_list) {
-            if (status->device_list->devices) {
-                free(status->device_list->devices);
-            }
-            free(status->device_list);
-            status->device_list = NULL;
+        if (status->device_count > 0) {
+            chain_bus_clear_bus_devices(bus_idx);
+            chain_bus_request_status_refresh();
         }
-        if (status->device_status) {
-            free(status->device_status);
-            status->device_status = NULL;
-        }
-        status->device_count = 0;
         return;
     }
 
@@ -86,6 +128,10 @@ void chain_bus_scan_single(int bus_idx)
     chain_status_t chain_ret = chain->getDeviceNum(&device_count, 1000);
     if (chain_ret != CHAIN_OK) {
         ESP_LOGE(TAG, "[%s] 获取设备数量失败: %d", bus_names[bus_idx], chain_ret);
+        if (status->device_count > 0) {
+            chain_bus_clear_bus_devices(bus_idx);
+            chain_bus_request_status_refresh();
+        }
         return;
     }
 
@@ -149,6 +195,8 @@ void chain_bus_scan_single(int bus_idx)
     // 获取设备列表
     if (!chain->getDeviceList(status->device_list, 2000)) {
         ESP_LOGE(TAG, "[%s] 获取设备列表失败", bus_names[bus_idx]);
+        chain_bus_clear_bus_devices(bus_idx);
+        chain_bus_request_status_refresh();
         return;
     }
 
@@ -160,8 +208,13 @@ void chain_bus_scan_single(int bus_idx)
             backup_rgb_color = status->device_status[i].rgb_color;
         }
 
-        status->device_status[i].id             = status->device_list->devices[i].id;
-        status->device_status[i].type           = status->device_list->devices[i].device_type;
+        uint8_t prev_id               = status->device_status[i].id;
+        chain_device_type_t prev_type = status->device_status[i].type;
+        uint8_t new_id                = status->device_list->devices[i].id;
+        chain_device_type_t new_type  = status->device_list->devices[i].device_type;
+
+        status->device_status[i].id             = new_id;
+        status->device_status[i].type           = new_type;
         status->device_status[i].connected      = true;
         status->device_status[i].event_updated  = false;
         status->device_status[i].status_updated = true;  // 新设备需要发送状态
@@ -214,6 +267,10 @@ void chain_bus_scan_single(int bus_idx)
             }
         }
 
+        if (prev_id != new_id || prev_type != new_type) {
+            chain_bus_init_device_hardware(bus_idx, &status->device_status[i]);
+        }
+
         // 初始化动态轮询参数
         status->device_status[i].consecutive_no_change = 0;
         switch (status->device_status[i].type) {
@@ -224,15 +281,30 @@ void chain_bus_scan_single(int bus_idx)
                 break;
             case CHAIN_KEY_TYPE_CODE:
             case CHAIN_ANGLE_TYPE_CODE:
+            case CHAIN_PEDAL_TYPE_CODE:
                 status->device_status[i].poll_priority   = 1;  // 高优先级
                 status->device_status[i].needs_fast_poll = false;
                 break;
             case CHAIN_PIR_TYPE_CODE:
+            case CHAIN_MIC_TYPE_CODE:
                 status->device_status[i].poll_priority   = 2;  // 中优先级
                 status->device_status[i].needs_fast_poll = false;
                 break;
-            default:
+            case CHAIN_ENV_TYPE_CODE:
+            case CHAIN_IMU_TYPE_CODE:
+            case CHAIN_DLight_TYPE_CODE:
+            case CHAIN_TOF_TYPE_CODE:
+            case CHAIN_SWITCH_TYPE_CODE:
+            case UNIT_CHAIN_BUS_TYPE_CODE:
+            case CHAIN_BUZZER_TYPE_CODE:
+            case UNIT_8SERVOS2_CHAIN_TYPE_CODE:
+            case CHAIN_MONO_TYPE_CODE:
+            case CHAIN_RGB_TYPE_CODE:
                 status->device_status[i].poll_priority   = 3;  // 低优先级
+                status->device_status[i].needs_fast_poll = false;
+                break;
+            default:
+                status->device_status[i].poll_priority   = 3;
                 status->device_status[i].needs_fast_poll = false;
                 break;
         }
@@ -240,6 +312,13 @@ void chain_bus_scan_single(int bus_idx)
 
         ESP_LOGD(TAG, "[%s] 设备 %d: ID=%d, 类型=%s (0x%04X)", bus_names[bus_idx], i + 1, status->device_status[i].id,
                  chain_device_type_name(status->device_status[i].type), status->device_status[i].type);
+    }
+
+    if (status->device_count != prev_count) {
+        for (uint16_t i = 0; i < status->device_count; i++) {
+            status->device_status[i].status_updated = true;
+        }
+        chain_bus_request_status_refresh();
     }
 
     ESP_LOGI(TAG, "[%s] 设备扫描完成", bus_names[bus_idx]);
@@ -313,7 +392,7 @@ void chain_bus_poll_device_data(int bus_idx, int dev_idx)
                         status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
                         xQueueSend(status_refresh_queue, &refresh_msg, 0);
                     }
-                    hid_func_params_t params;
+                    hid_func_params_t params   = {};
                     params.mouse_value.buttons = button_status == 1 ? 1 : 0;
                     hid_func_type_t func_type  = button_status == 1 ? dev_status->hid_config.key_config.press_down
                                                                     : dev_status->hid_config.key_config.press_release;
@@ -347,57 +426,52 @@ void chain_bus_poll_device_data(int bus_idx, int dev_idx)
         case CHAIN_JOYSTICK_TYPE_CODE: {
             // 获取摇杆ADC值
             int8_t x_value, y_value;
-            bool joystick_changed          = false;
-            hid_func_params_t mouse_report = {0};
+            bool joystick_changed = false;
             status = chain->getJoystickMappedInt8Value(dev_status->id, &x_value, &y_value, CHAIN_BUS_DEVICE_TIMEOUT_MS);
             if (status == CHAIN_OK) {
-                // 检查XY值变化
-                if (dev_status->device_data.joystick_data.x_value != x_value ||
-                    dev_status->device_data.joystick_data.y_value != y_value) {
+                int8_t prev_x = (int8_t)dev_status->device_data.joystick_data.x_value;
+                int8_t prev_y = (int8_t)dev_status->device_data.joystick_data.y_value;
+                if (prev_x != x_value || prev_y != y_value) {
                     dev_status->device_data.joystick_data.x_value = x_value;
                     dev_status->device_data.joystick_data.y_value = y_value;
                     joystick_changed                              = true;
                     data_changed                                  = true;
+                }
 
-                    // 触发HID摇杆移动功能 (只有实际变化时才处理)
-                    if (dev_status->hid_config.joystick_config.xy_move_func != HID_FUNC_NONE) {
-                        // 优化的阈值和灵敏度设置
-                        const int8_t threshold  = 2;  // 增大死区，减少微小抖动
-                        const float sensitivity = 1;  // 增大灵敏度，获得更好的响应
+                hid_func_type_t xy_func = dev_status->hid_config.joystick_config.xy_move_func;
+                if (xy_func != HID_FUNC_NONE) {
+                    const int8_t deadzone       = JOYSTICK_MOUSE_DEADZONE;
+                    const bool outside_deadzone = (abs(x_value) > deadzone || abs(y_value) > deadzone);
 
-                        int8_t mouse_x = 0, mouse_y = 0;
-
-                        if (abs(x_value) > threshold) {
-                            mouse_x = (int8_t)(x_value * sensitivity);
-                            mouse_x = (mouse_x > 127) ? 127 : ((mouse_x < -127) ? -127 : mouse_x);
+                    if (xy_func == HID_FUNC_JOYSTICK_WASD || xy_func == HID_FUNC_JOYSTICK_ARROWS) {
+                        chain_bus_hid_update_joystick_keys(xy_func, x_value, y_value);
+                        if (outside_deadzone) {
+                            dev_status->consecutive_no_change = 0;
                         }
+                    } else if (outside_deadzone) {
+                        int8_t mouse_x = chain_bus_joystick_axis_delta(x_value, deadzone, JOYSTICK_MOUSE_DIVISOR);
+                        int8_t mouse_y = chain_bus_joystick_axis_delta(y_value, deadzone, JOYSTICK_MOUSE_DIVISOR);
 
-                        if (abs(y_value) > threshold) {
-                            mouse_y = (int8_t)(y_value * sensitivity);
-                            mouse_y = (mouse_y > 127) ? 127 : ((mouse_y < -127) ? -127 : mouse_y);
-                        }
-
-                        if (dev_status->hid_config.joystick_config.xy_move_func == HID_FUNC_MOUSE_MOVE) {
+                        if (xy_func == HID_FUNC_MOUSE_MOVE) {
                             if (dev_status->hid_config.joystick_config.xy_move_reverse) {
-                                mouse_report.mouse_value.x = -mouse_x;  // 翻转X轴
-                                mouse_report.mouse_value.y = mouse_y;
+                                chain_bus_hid_send_mouse_delta(-mouse_x, mouse_y);
                             } else {
-                                mouse_report.mouse_value.x = mouse_x;
-                                mouse_report.mouse_value.y = -mouse_y;
+                                chain_bus_hid_send_mouse_delta(mouse_x, -mouse_y);
                             }
-                        } else if (dev_status->hid_config.joystick_config.xy_move_func == HID_FUNC_MOUSE_SCROLL ||
-                                   dev_status->hid_config.joystick_config.xy_move_func == HID_FUNC_MOUSE_PAN) {
+                        } else if (xy_func == HID_FUNC_MOUSE_SCROLL || xy_func == HID_FUNC_MOUSE_PAN) {
+                            int8_t scroll_x = chain_bus_joystick_axis_delta(x_value, deadzone, JOYSTICK_SCROLL_DIVISOR);
+                            int8_t scroll_y = chain_bus_joystick_axis_delta(y_value, deadzone, JOYSTICK_SCROLL_DIVISOR);
+                            hid_func_params_t mouse_report = {0};
                             if (dev_status->hid_config.joystick_config.xy_move_reverse) {
-                                mouse_report.mouse_value.wheel = -mouse_y;
-                                mouse_report.mouse_value.pan   = -mouse_x;
+                                mouse_report.mouse_value.wheel = -scroll_y;
+                                mouse_report.mouse_value.pan   = -scroll_x;
                             } else {
-                                mouse_report.mouse_value.wheel = mouse_y;
-                                mouse_report.mouse_value.pan   = mouse_x;
+                                mouse_report.mouse_value.wheel = scroll_y;
+                                mouse_report.mouse_value.pan   = scroll_x;
                             }
+                            chain_bus_hid_trigger_function(xy_func, &mouse_report);
                         }
-
-                        chain_bus_hid_trigger_function(dev_status->hid_config.joystick_config.xy_move_func,
-                                                       &mouse_report);
+                        dev_status->consecutive_no_change = 0;
                     }
                 }
             }
@@ -410,7 +484,7 @@ void chain_bus_poll_device_data(int bus_idx, int dev_idx)
                 joystick_changed                                    = true;
                 data_changed                                        = true;
 
-                hid_func_params_t params;
+                hid_func_params_t params   = {};
                 params.mouse_value.buttons = button_status == 1 ? 1 : 0;
                 hid_func_type_t func_type  = button_status == 1 ? dev_status->hid_config.joystick_config.press_down
                                                                 : dev_status->hid_config.joystick_config.press_release;
@@ -448,7 +522,7 @@ void chain_bus_poll_device_data(int bus_idx, int dev_idx)
                                                        ? dev_status->hid_config.encoder_config.rotate_cw_func
                                                        : dev_status->hid_config.encoder_config.rotate_ccw_func;
 
-                        hid_func_params_t params;
+                        hid_func_params_t params = {};
                         if (hid_func == HID_FUNC_MOUSE_SCROLL) {
                             params.mouse_value.wheel = encoder_delta;
                         } else if (hid_func == HID_FUNC_MOUSE_PAN) {
@@ -477,7 +551,7 @@ void chain_bus_poll_device_data(int bus_idx, int dev_idx)
                     dev_status->data_updated                           = true;
                     data_changed                                       = true;
 
-                    hid_func_params_t params;
+                    hid_func_params_t params   = {};
                     params.mouse_value.buttons = button_status == 1 ? 1 : 0;
                     hid_func_type_t func_type  = button_status == 1
                                                      ? dev_status->hid_config.encoder_config.press_down
@@ -534,7 +608,7 @@ void chain_bus_poll_device_data(int bus_idx, int dev_idx)
                         (uint16_t)(dev_status->device_data.angle_data.last_angle_value * 100 / 4095);
                     int8_t pan_value = volume_level - last_volume_level;
                     if (volume_level != last_volume_level) {
-                        hid_func_params_t params;
+                        hid_func_params_t params  = {};
                         hid_func_type_t func_type = dev_status->hid_config.angle_config.angle_func;
                         if (func_type == HID_FUNC_MOUSE_PAN) {
                             params.mouse_value.pan = pan_value;
@@ -554,33 +628,207 @@ void chain_bus_poll_device_data(int bus_idx, int dev_idx)
             switch_status_type_t switch_status;
             status = chain->getSwitchStatus(dev_status->id, &switch_status, CHAIN_BUS_DEVICE_TIMEOUT_MS);
             if (status == CHAIN_OK) {
+                dev_status->communication_flag = true;
                 if (dev_status->device_data.switch_data.switch_status != switch_status) {
                     dev_status->device_data.switch_data.switch_status = switch_status;
-                    dev_status->data_updated                          = true;
+                    dev_status->device_data.switch_data.switch_count++;
+                    dev_status->data_updated = true;
+                    data_changed             = true;
+                    hid_func_params_t params = {};
+                    hid_func_type_t func     = (switch_status == CHAIN_SWITCH_OPEN)
+                                                   ? dev_status->hid_config.switch_config.open_func
+                                                   : dev_status->hid_config.switch_config.close_func;
+                    chain_bus_hid_trigger_function(func, &params);
                     if (status_refresh_queue) {
                         status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
                         xQueueSend(status_refresh_queue, &refresh_msg, 0);
                     }
                 }
-                const char* status_str = (switch_status == CHAIN_SWITCH_OPEN) ? "打开" : "关闭";
-                // ESP_LOGI(TAG, "[%s] SWITCH设备 %d: 开关状态=%s", bus_names[bus_idx], dev_status->id, status_str);
+            } else {
+                dev_status->communication_flag = false;
             }
             break;
         }
 
         case CHAIN_PEDAL_TYPE_CODE: {
-            // 获取踏板状态
-            // ESP_LOGD(TAG, "[%s] PEDAL设备 %d: 轮询中",
-            //          bus_names[bus_idx], dev_status->id);
+            uint8_t button_status = 0;
+            status = chain->getPedalButtonStatus(dev_status->id, &button_status, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+            if (status == CHAIN_OK) {
+                if (dev_status->device_data.pedal_data.button_status != button_status) {
+                    dev_status->device_data.pedal_data.button_status = button_status;
+                    dev_status->data_updated                         = true;
+                    data_changed                                     = true;
+                    hid_func_params_t params                         = {};
+                    params.mouse_value.buttons                       = button_status == 1 ? 1 : 0;
+                    hid_func_type_t func_type = button_status == 1 ? dev_status->hid_config.pedal_config.press_down
+                                                                   : dev_status->hid_config.pedal_config.press_release;
+                    chain_bus_hid_trigger_function(func_type, &params);
+                    if (status_refresh_queue) {
+                        status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+                        xQueueSend(status_refresh_queue, &refresh_msg, 0);
+                    }
+                }
+            }
+            chain_pedal_switch_status_t switch_status;
+            chain_status_t sw_ret =
+                chain->getPedalSwitchStatus(dev_status->id, &switch_status, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+            if (sw_ret == CHAIN_OK) {
+                uint8_t sw_val = (uint8_t)switch_status;
+                if (dev_status->device_data.pedal_data.switch_status != sw_val) {
+                    dev_status->device_data.pedal_data.switch_status = sw_val;
+                    dev_status->data_updated                         = true;
+                    data_changed                                     = true;
+                }
+            }
             break;
         }
 
         case CHAIN_MIC_TYPE_CODE: {
-            // 获取麦克风状态
-            // ESP_LOGD(TAG, "[%s] MIC设备 %d: 轮询中",
-            //          bus_names[bus_idx], dev_status->id);
+            uint16_t adc_value = 0;
+            status             = chain->getMIC12BitAdc(dev_status->id, &adc_value, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+            if (status == CHAIN_OK) {
+                if (dev_status->device_data.mic_data.adc_value != adc_value) {
+                    dev_status->device_data.mic_data.adc_value = adc_value;
+                    dev_status->data_updated                   = true;
+                    data_changed                               = true;
+                    if (status_refresh_queue) {
+                        status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+                        xQueueSend(status_refresh_queue, &refresh_msg, 0);
+                    }
+                }
+            }
+            uint16_t threshold = 0;
+            if (chain->getMICThresholdValue(dev_status->id, &threshold, CHAIN_BUS_DEVICE_TIMEOUT_MS) == CHAIN_OK) {
+                dev_status->device_data.mic_data.threshold = threshold;
+            }
             break;
         }
+
+        case CHAIN_ENV_TYPE_CODE: {
+            int16_t temperature = 0;
+            uint8_t humidity    = 0;
+            bool env_changed    = false;
+            bool aht_ok         = false;
+            bool spa_ok         = false;
+
+            if (chain->getAHT20Data(dev_status->id, &temperature, &humidity, CHAIN_BUS_ENV_TIMEOUT_MS) == CHAIN_OK) {
+                aht_ok = true;
+                if (dev_status->device_data.env_data.temperature != temperature ||
+                    dev_status->device_data.env_data.humidity != humidity) {
+                    dev_status->device_data.env_data.temperature = temperature;
+                    dev_status->device_data.env_data.humidity    = humidity;
+                    dev_status->data_updated                     = true;
+                    env_changed                                  = true;
+                }
+            }
+            uint16_t pressure = 0;
+            int32_t altitude  = 0;
+            int16_t spa_temp  = 0;
+            if (chain->getSPA06Data(dev_status->id, &spa_temp, &pressure, &altitude, CHAIN_BUS_ENV_TIMEOUT_MS) ==
+                CHAIN_OK) {
+                spa_ok = true;
+                if (dev_status->device_data.env_data.pressure != pressure ||
+                    dev_status->device_data.env_data.altitude != altitude) {
+                    dev_status->device_data.env_data.pressure = pressure;
+                    dev_status->device_data.env_data.altitude = altitude;
+                    dev_status->data_updated                  = true;
+                    env_changed                               = true;
+                }
+            }
+
+            dev_status->device_data.env_data.spa_ok = spa_ok;
+            dev_status->communication_flag          = (aht_ok || spa_ok);
+            status                                  = (aht_ok || spa_ok) ? CHAIN_OK : CHAIN_TIMEOUT;
+
+            if (env_changed) {
+                data_changed = true;
+                if (status_refresh_queue) {
+                    status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+                    xQueueSend(status_refresh_queue, &refresh_msg, 0);
+                }
+            }
+            break;
+        }
+
+        case CHAIN_IMU_TYPE_CODE: {
+            int16_t ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
+            uint16_t temp    = 0;
+            bool imu_changed = false;
+            bool accel_ok    = false;
+            bool gyro_ok     = false;
+            bool temp_ok     = false;
+            if (chain->getIMUAccelData(dev_status->id, &ax, &ay, &az, CHAIN_BUS_DEVICE_TIMEOUT_MS) == CHAIN_OK) {
+                accel_ok = true;
+                if (dev_status->device_data.imu_data.ax != ax || dev_status->device_data.imu_data.ay != ay ||
+                    dev_status->device_data.imu_data.az != az) {
+                    dev_status->device_data.imu_data.ax = ax;
+                    dev_status->device_data.imu_data.ay = ay;
+                    dev_status->device_data.imu_data.az = az;
+                    imu_changed                         = true;
+                }
+            }
+            if (chain->getIMUGyroData(dev_status->id, &gx, &gy, &gz, CHAIN_BUS_DEVICE_TIMEOUT_MS) == CHAIN_OK) {
+                gyro_ok = true;
+                if (dev_status->device_data.imu_data.gx != gx || dev_status->device_data.imu_data.gy != gy ||
+                    dev_status->device_data.imu_data.gz != gz) {
+                    dev_status->device_data.imu_data.gx = gx;
+                    dev_status->device_data.imu_data.gy = gy;
+                    dev_status->device_data.imu_data.gz = gz;
+                    imu_changed                         = true;
+                }
+            }
+            if (chain->getIMUTemperature(dev_status->id, &temp, CHAIN_BUS_DEVICE_TIMEOUT_MS) == CHAIN_OK) {
+                temp_ok = true;
+                if (dev_status->device_data.imu_data.temperature != temp) {
+                    dev_status->device_data.imu_data.temperature = temp;
+                    imu_changed                                  = true;
+                }
+            }
+            dev_status->communication_flag = (accel_ok || gyro_ok || temp_ok);
+            status                         = (accel_ok || gyro_ok || temp_ok) ? CHAIN_OK : CHAIN_TIMEOUT;
+            if (imu_changed) {
+                dev_status->data_updated = true;
+                data_changed             = true;
+            }
+            break;
+        }
+
+        case CHAIN_DLight_TYPE_CODE: {
+            uint32_t lux = 0;
+            status       = chain->getDLightLux(dev_status->id, &lux, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+            if (status == CHAIN_OK && dev_status->device_data.dlight_data.lux != lux) {
+                dev_status->device_data.dlight_data.lux = lux;
+                dev_status->data_updated                = true;
+                data_changed                            = true;
+            }
+            break;
+        }
+
+        case UNIT_8SERVOS2_CHAIN_TYPE_CODE: {
+            uint8_t angles[8] = {0};
+            if (chain->getServosAngleAll(dev_status->id, angles, 8, CHAIN_BUS_DEVICE_TIMEOUT_MS) == CHAIN_OK) {
+                if (memcmp(dev_status->device_data.servos_data.angles, angles, 8) != 0) {
+                    memcpy(dev_status->device_data.servos_data.angles, angles, 8);
+                    dev_status->data_updated = true;
+                    data_changed             = true;
+                }
+            }
+            uint16_t dc_v = 0, grove_v = 0;
+            if (chain->getServosDcVoltage(dev_status->id, &dc_v, CHAIN_BUS_DEVICE_TIMEOUT_MS) == CHAIN_OK) {
+                dev_status->device_data.servos_data.dc_voltage = dc_v;
+            }
+            if (chain->getServosGroveVoltage(dev_status->id, &grove_v, CHAIN_BUS_DEVICE_TIMEOUT_MS) == CHAIN_OK) {
+                dev_status->device_data.servos_data.grove_voltage = grove_v;
+            }
+            break;
+        }
+
+        case CHAIN_BUZZER_TYPE_CODE:
+        case CHAIN_MONO_TYPE_CODE:
+        case CHAIN_RGB_TYPE_CODE:
+        case UNIT_CHAIN_BUS_TYPE_CODE:
+            // 输出/协议类设备无需高频轮询
+            break;
 
         default:
             // 对于其他类型的设备，只获取基本信息
@@ -591,10 +839,27 @@ void chain_bus_poll_device_data(int bus_idx, int dev_idx)
 
     if (status != CHAIN_OK) {
         ESP_LOGW(TAG, "[%s] 设备 %d 数据轮询失败: %d", bus_names[bus_idx], dev_status->id, status);
-        bus_status[bus_idx].last_scan_time                            = 0;
-        bus_status[bus_idx].device_status[dev_idx].communication_flag = false;
+        bus_status[bus_idx].last_scan_time = 0;
+        if (dev_status->type != CHAIN_ENV_TYPE_CODE) {
+            bus_status[bus_idx].device_status[dev_idx].communication_flag = false;
+        }
+        if (dev_status->poll_fail_count < 255) {
+            dev_status->poll_fail_count++;
+        }
+        if (dev_status->poll_fail_count >= 3 && dev_status->type != CHAIN_ENV_TYPE_CODE) {
+            dev_status->connected      = false;
+            dev_status->status_updated = true;
+            chain_bus_request_status_refresh();
+        } else if (dev_status->poll_fail_count >= 5 && dev_status->type == CHAIN_ENV_TYPE_CODE) {
+            dev_status->connected      = false;
+            dev_status->status_updated = true;
+            chain_bus_request_status_refresh();
+        }
     } else {
-        bus_status[bus_idx].device_status[dev_idx].communication_flag = true;
+        dev_status->poll_fail_count = 0;
+        if (dev_status->type != CHAIN_ENV_TYPE_CODE) {
+            bus_status[bus_idx].device_status[dev_idx].communication_flag = true;
+        }
 
         // 动态轮询统计：跟踪设备变化频率
         if (data_changed) {
@@ -687,7 +952,7 @@ void chain_bus_check_events(void)
                                 hid_func = dev_status->hid_config.key_config.long_press;
                                 break;
                         }
-                        hid_func_params_t params;
+                        hid_func_params_t params   = {};
                         params.mouse_value.buttons = 1;
                         chain_bus_hid_trigger_function(hid_func, &params);
 
@@ -704,17 +969,23 @@ void chain_bus_check_events(void)
                     // 检查PIR事件
                     pir_detect_report_t pir_trigger;
                     while (chain->getPIRDetectTrigger(dev_status->id, &pir_trigger)) {
-                        const char* detect_str = "";
+                        const char* detect_str   = "";
+                        hid_func_type_t hid_func = HID_FUNC_NONE;
                         switch (pir_trigger) {
-                            case CHAIN_PIR_REPORT_NO_PERSON:
-                                detect_str = "no person";
+                            case CHAIN_PIR_REPORT_PERSON_LEAVE:
+                                detect_str = "person leave";
+                                hid_func   = dev_status->hid_config.pir_config.person_leave_func;
                                 break;
-                            case CHAIN_PIR_REPORT_PERSON:
-                                detect_str = "person";
+                            case CHAIN_PIR_REPORT_PERSON_COME:
+                                detect_str = "person come";
+                                hid_func   = dev_status->hid_config.pir_config.person_come_func;
                                 break;
                         }
 
-                        // 记录事件信息
+                        dev_status->device_data.pir_data.trigger_count++;
+                        hid_func_params_t params = {};
+                        chain_bus_hid_trigger_function(hid_func, &params);
+
                         snprintf(dev_status->last_event_desc, sizeof(dev_status->last_event_desc),
                                  "detection status: %s", detect_str);
                         dev_status->last_event_time = esp_timer_get_time() / 1000;
@@ -767,7 +1038,7 @@ void chain_bus_check_events(void)
                                 hid_func = dev_status->hid_config.joystick_config.long_press;
                                 break;
                         }
-                        hid_func_params_t params;
+                        hid_func_params_t params   = {};
                         params.mouse_value.buttons = 1;
                         chain_bus_hid_trigger_function(hid_func, &params);
 
@@ -787,10 +1058,10 @@ void chain_bus_check_events(void)
                     while (chain->getSwitchTrigger(dev_status->id, &switch_trigger)) {
                         const char* slip_str = "";
                         switch (switch_trigger) {
-                            case CHAIN_SWITCH_REPORT_CLOSE:
+                            case CHAIN_SWITCH_TRIGGER_REPORT_CLOSE:
                                 slip_str = "closed";
                                 break;
-                            case CHAIN_SWITCH_REPORT_OPEN:
+                            case CHAIN_SWITCH_TRIGGER_REPORT_OPEN:
                                 slip_str = "opened";
                                 break;
                         }
@@ -848,7 +1119,7 @@ void chain_bus_check_events(void)
                                 hid_func = dev_status->hid_config.encoder_config.long_press;
                                 break;
                         }
-                        hid_func_params_t params;
+                        hid_func_params_t params   = {};
                         params.mouse_value.buttons = 1;
                         chain_bus_hid_trigger_function(hid_func, &params);
 
@@ -863,14 +1134,114 @@ void chain_bus_check_events(void)
                 }
 
                 case CHAIN_PEDAL_TYPE_CODE: {
-                    // 踏板设备事件检查
-                    ESP_LOGD(TAG, "[%s] PEDAL设备 %d: 暂不支持事件检查", bus_names[bus_idx], dev_status->id);
+                    chain_pedal_press_event_t pedal_trigger;
+                    while (chain->getPedalTriggerStatus(dev_status->id, &pedal_trigger)) {
+                        const char* press_str    = "";
+                        hid_func_type_t hid_func = HID_FUNC_NONE;
+                        switch (pedal_trigger) {
+                            case CHAIN_PEDAL_SINGLE_CLICK:
+                                press_str = "single click";
+                                hid_func  = dev_status->hid_config.pedal_config.single_click;
+                                break;
+                            case CHAIN_PEDAL_SWITCH_ON:
+                                press_str = "switch on";
+                                hid_func  = dev_status->hid_config.pedal_config.press_down;
+                                break;
+                            case CHAIN_PEDAL_SWITCH_OFF:
+                                press_str = "switch off";
+                                hid_func  = dev_status->hid_config.pedal_config.press_release;
+                                break;
+                        }
+                        snprintf(dev_status->last_event_desc, sizeof(dev_status->last_event_desc), "pedal: %s",
+                                 press_str);
+                        dev_status->last_event_time = esp_timer_get_time() / 1000;
+                        dev_status->event_updated   = true;
+                        dev_status->status_updated  = true;
+                        hid_func_params_t params    = {};
+                        params.mouse_value.buttons  = 1;
+                        chain_bus_hid_trigger_function(hid_func, &params);
+                        if (status_refresh_queue) {
+                            status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+                            xQueueSend(status_refresh_queue, &refresh_msg, 0);
+                        }
+                    }
                     break;
                 }
 
                 case CHAIN_MIC_TYPE_CODE: {
-                    // 麦克风设备事件检查
-                    ESP_LOGD(TAG, "[%s] MIC设备 %d: 暂不支持事件检查", bus_names[bus_idx], dev_status->id);
+                    chain_mic_trigger_t mic_trigger;
+                    while (chain->getMICTriggerStatus(dev_status->id, &mic_trigger)) {
+                        const char* trigger_str =
+                            (mic_trigger == CHAIN_MIC_HIGH_THRESHOLD_TRIGGER) ? "high threshold" : "low threshold";
+                        hid_func_type_t hid_func = (mic_trigger == CHAIN_MIC_HIGH_THRESHOLD_TRIGGER)
+                                                       ? dev_status->hid_config.mic_config.high_threshold_func
+                                                       : dev_status->hid_config.mic_config.low_threshold_func;
+                        snprintf(dev_status->last_event_desc, sizeof(dev_status->last_event_desc), "mic: %s",
+                                 trigger_str);
+                        dev_status->last_event_time = esp_timer_get_time() / 1000;
+                        dev_status->event_updated   = true;
+                        dev_status->status_updated  = true;
+                        hid_func_params_t params    = {};
+                        chain_bus_hid_trigger_function(hid_func, &params);
+                        if (status_refresh_queue) {
+                            status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+                            xQueueSend(status_refresh_queue, &refresh_msg, 0);
+                        }
+                    }
+                    break;
+                }
+
+                case CHAIN_ENV_TYPE_CODE: {
+                    uint8_t trigger_status = 0;
+                    while (chain->getENVChangeTrigger(dev_status->id, &trigger_status)) {
+                        snprintf(dev_status->last_event_desc, sizeof(dev_status->last_event_desc),
+                                 "env trigger: 0x%02X", trigger_status);
+                        dev_status->last_event_time = esp_timer_get_time() / 1000;
+                        dev_status->event_updated   = true;
+                        dev_status->status_updated  = true;
+                        if (status_refresh_queue) {
+                            status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+                            xQueueSend(status_refresh_queue, &refresh_msg, 0);
+                        }
+                    }
+                    break;
+                }
+
+                case CHAIN_IMU_TYPE_CODE: {
+                    uint8_t int_status = 0;
+                    while (chain->getIMUEventTrigger(dev_status->id, &int_status)) {
+                        snprintf(dev_status->last_event_desc, sizeof(dev_status->last_event_desc),
+                                 "imu trigger: 0x%02X", int_status);
+                        dev_status->last_event_time = esp_timer_get_time() / 1000;
+                        dev_status->event_updated   = true;
+                        dev_status->status_updated  = true;
+                        if (status_refresh_queue) {
+                            status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+                            xQueueSend(status_refresh_queue, &refresh_msg, 0);
+                        }
+                    }
+                    break;
+                }
+
+                case CHAIN_DLight_TYPE_CODE: {
+                    chain_dlight_event_trigger_t trigger_status;
+                    while (chain->getDLightLuxTrigger(dev_status->id, &trigger_status)) {
+                        const char* lux_str = (trigger_status == CHAIN_DLIGHT_REPORT_LUX_HIGH) ? "lux high" : "lux low";
+                        hid_func_type_t hid_func = (trigger_status == CHAIN_DLIGHT_REPORT_LUX_HIGH)
+                                                       ? dev_status->hid_config.dlight_config.lux_high_func
+                                                       : dev_status->hid_config.dlight_config.lux_low_func;
+                        snprintf(dev_status->last_event_desc, sizeof(dev_status->last_event_desc), "dlight: %s",
+                                 lux_str);
+                        dev_status->last_event_time = esp_timer_get_time() / 1000;
+                        dev_status->event_updated   = true;
+                        dev_status->status_updated  = true;
+                        hid_func_params_t params    = {};
+                        chain_bus_hid_trigger_function(hid_func, &params);
+                        if (status_refresh_queue) {
+                            status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+                            xQueueSend(status_refresh_queue, &refresh_msg, 0);
+                        }
+                    }
                     break;
                 }
 
@@ -1062,7 +1433,7 @@ void chain_bus_init_device_hid_config(chain_device_status_t* device_status, int 
             break;
 
         case CHAIN_JOYSTICK_TYPE_CODE:
-            // JOYSTICK设备默认配置: 按下鼠标左键按下，释放鼠标左键释放，XY轴映射鼠标移动
+            // JOYSTICK设备默认配置: 按下鼠标右键，XY轴映射鼠标移动
             device_status->hid_config.joystick_config.single_click  = HID_FUNC_NONE;
             device_status->hid_config.joystick_config.double_click  = HID_FUNC_NONE;
             device_status->hid_config.joystick_config.long_press    = HID_FUNC_NONE;
@@ -1071,7 +1442,7 @@ void chain_bus_init_device_hid_config(chain_device_status_t* device_status, int 
             device_status->hid_config.joystick_config.xy_move_func  = HID_FUNC_MOUSE_MOVE;
             device_status->hid_config.joystick_config.xy_move_reverse =
                 bus_idx == 0 ? true : false;  // 左总线默认翻转，右总线默认不翻转
-            ESP_LOGI(TAG, "初始化JOYSTICK设备 %d 默认HID配置: 按下鼠标左键、XY轴鼠标移动", device_status->id);
+            ESP_LOGI(TAG, "初始化JOYSTICK设备 %d 默认HID配置: 按下鼠标右键、XY轴鼠标移动", device_status->id);
             break;
 
         case CHAIN_ENCODER_TYPE_CODE:
@@ -1090,6 +1461,43 @@ void chain_bus_init_device_hid_config(chain_device_status_t* device_status, int 
             // ANGLE设备默认配置: ADC值映射音量值
             device_status->hid_config.angle_config.angle_func = HID_FUNC_MOUSE_SCROLL;
             ESP_LOGI(TAG, "初始化ANGLE设备 %d 默认HID配置: 角度映射音量", device_status->id);
+            break;
+
+        case CHAIN_PEDAL_TYPE_CODE:
+            device_status->hid_config.pedal_config.single_click  = HID_FUNC_ENTER;
+            device_status->hid_config.pedal_config.double_click  = HID_FUNC_NONE;
+            device_status->hid_config.pedal_config.long_press    = HID_FUNC_NONE;
+            device_status->hid_config.pedal_config.press_down    = HID_FUNC_MOUSE_BUTTON_LEFT_DOWN;
+            device_status->hid_config.pedal_config.press_release = HID_FUNC_MOUSE_BUTTON_LEFT_UP;
+            ESP_LOGI(TAG, "初始化PEDAL设备 %d 默认HID配置", device_status->id);
+            break;
+
+        case CHAIN_MIC_TYPE_CODE:
+            device_status->hid_config.mic_config.high_threshold_func = HID_FUNC_VOLUME_MUTE;
+            device_status->hid_config.mic_config.low_threshold_func  = HID_FUNC_NONE;
+            device_status->hid_config.mic_config.threshold           = 2000;
+            device_status->hid_config.mic_config.trigger_interval_ms = 500;
+            ESP_LOGI(TAG, "初始化MIC设备 %d 默认HID配置", device_status->id);
+            break;
+
+        case CHAIN_SWITCH_TYPE_CODE:
+            device_status->hid_config.switch_config.open_func  = HID_FUNC_VOLUME_MUTE;
+            device_status->hid_config.switch_config.close_func = HID_FUNC_NONE;
+            ESP_LOGI(TAG, "初始化SWITCH设备 %d 默认HID配置", device_status->id);
+            break;
+
+        case CHAIN_DLight_TYPE_CODE:
+            device_status->hid_config.dlight_config.lux_high_func  = HID_FUNC_VOLUME_MUTE;
+            device_status->hid_config.dlight_config.lux_low_func   = HID_FUNC_VOLUME_MUTE;
+            device_status->hid_config.dlight_config.high_threshold = 500;
+            device_status->hid_config.dlight_config.low_threshold  = 100;
+            ESP_LOGI(TAG, "初始化DLIGHT设备 %d 默认HID配置", device_status->id);
+            break;
+
+        case CHAIN_PIR_TYPE_CODE:
+            device_status->hid_config.pir_config.person_come_func  = HID_FUNC_MEDIA_PLAY_PAUSE;
+            device_status->hid_config.pir_config.person_leave_func = HID_FUNC_NONE;
+            ESP_LOGI(TAG, "初始化PIR设备 %d 默认HID配置", device_status->id);
             break;
 
         default:
@@ -1132,6 +1540,28 @@ esp_err_t chain_bus_set_device_hid_config(int bus_idx, uint8_t device_id, const 
         case CHAIN_ANGLE_TYPE_CODE:
             memcpy(&status->device_status[device_index].hid_config.angle_config, &config->angle_config,
                    sizeof(chain_angle_hid_config_t));
+            break;
+        case CHAIN_PEDAL_TYPE_CODE:
+            memcpy(&status->device_status[device_index].hid_config.pedal_config, &config->pedal_config,
+                   sizeof(chain_pedal_hid_config_t));
+            break;
+        case CHAIN_MIC_TYPE_CODE:
+            memcpy(&status->device_status[device_index].hid_config.mic_config, &config->mic_config,
+                   sizeof(chain_mic_hid_config_t));
+            chain_bus_apply_mic_config(bus_idx, device_id);
+            break;
+        case CHAIN_SWITCH_TYPE_CODE:
+            memcpy(&status->device_status[device_index].hid_config.switch_config, &config->switch_config,
+                   sizeof(chain_switch_hid_config_t));
+            break;
+        case CHAIN_DLight_TYPE_CODE:
+            memcpy(&status->device_status[device_index].hid_config.dlight_config, &config->dlight_config,
+                   sizeof(chain_dlight_hid_config_t));
+            chain_bus_apply_dlight_config(bus_idx, device_id);
+            break;
+        case CHAIN_PIR_TYPE_CODE:
+            memcpy(&status->device_status[device_index].hid_config.pir_config, &config->pir_config,
+                   sizeof(chain_pir_hid_config_t));
             break;
         default:
             ESP_LOGE(TAG, "不支持的设备类型: %s", chain_device_type_name(status->device_status[device_index].type));
@@ -1214,4 +1644,519 @@ esp_err_t chain_bus_get_device_uid_string(int bus_idx, uint8_t device_id, char* 
 
     chain_bus_uid_to_string(dev_status->uid, uid_str);
     return ESP_OK;
+}
+
+static esp_err_t chain_bus_validate_device(int bus_idx, uint8_t device_id, int* device_index)
+{
+    if (bus_idx < 0 || bus_idx >= 2 || device_id == 0 || device_index == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return chain_bus_find_device_index(bus_idx, device_id, device_index);
+}
+
+static esp_err_t chain_bus_validate_device_type(int bus_idx, uint8_t device_id, int* device_index,
+                                                chain_device_type_t expected_type)
+{
+    esp_err_t ret = chain_bus_validate_device(bus_idx, device_id, device_index);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    if (bus_status[bus_idx].device_status[*device_index].type != expected_type) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return ESP_OK;
+}
+
+esp_err_t chain_bus_buzzer_auto_play(int bus_idx, uint8_t device_id, uint16_t freq, uint8_t duty, uint16_t duration)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_BUZZER_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    uint8_t op = 0;
+    chain_status_t mode_status =
+        chains[bus_idx]->setBuzzerMode(device_id, BUZZER_MODE_AUTO_PLAY, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (mode_status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    chain_status_t status =
+        chains[bus_idx]->setBuzzerAutoPlay(device_id, freq, duty, duration, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    return (status == CHAIN_OK && op == 1) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t chain_bus_buzzer_note_play(int bus_idx, uint8_t device_id, uint8_t note, uint16_t duration)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_BUZZER_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    uint8_t op = 0;
+    chain_status_t mode_status =
+        chains[bus_idx]->setBuzzerMode(device_id, BUZZER_MODE_NOTE_PLAY, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (mode_status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    chain_status_t status =
+        chains[bus_idx]->setBuzzerNotePlay(device_id, (note_index_t)note, duration, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    return (status == CHAIN_OK && op == 1) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t chain_bus_buzzer_stop(int bus_idx, uint8_t device_id)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_BUZZER_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    uint8_t op   = 0;
+    Chain* chain = chains[bus_idx];
+    chain_status_t status;
+
+    status = chain->setBuzzerMode(device_id, BUZZER_MODE_NOTE_PLAY, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    status = chain->setBuzzerNotePlay(device_id, NOTE_REST, 1, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    status = chain->setBuzzerStatus(device_id, BUZZER_STATUS_OFF, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+esp_err_t chain_bus_mono_set_pixel(int bus_idx, uint8_t device_id, uint8_t x, uint8_t y, bool state)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_MONO_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    chain_device_status_t* dev_status = &bus_status[bus_idx].device_status[device_index];
+    if (!dev_status->device_data.mono_data.pixel_mode_active) {
+        uint8_t op = 0;
+        chain_status_t status =
+            chains[bus_idx]->setMonoMode(device_id, MONO_PIXEL_MODE, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+        if (status != CHAIN_OK || op != 1) {
+            return ESP_FAIL;
+        }
+        dev_status->device_data.mono_data.mode              = MONO_PIXEL_MODE;
+        dev_status->device_data.mono_data.pixel_mode_active = true;
+        memset(dev_status->device_data.mono_data.pixel_buffer, 0,
+               sizeof(dev_status->device_data.mono_data.pixel_buffer));
+    }
+    if (y < 8 && x < 8) {
+        if (state) {
+            dev_status->device_data.mono_data.pixel_buffer[y] |= (uint8_t)(1U << x);
+        } else {
+            dev_status->device_data.mono_data.pixel_buffer[y] &= (uint8_t)~(1U << x);
+        }
+    }
+    return chain_bus_mono_buffer_refresh(bus_idx, device_id, dev_status->device_data.mono_data.pixel_buffer);
+}
+
+esp_err_t chain_bus_mono_clear(int bus_idx, uint8_t device_id)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_MONO_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    chain_device_status_t* dev_status = &bus_status[bus_idx].device_status[device_index];
+    memset(dev_status->device_data.mono_data.pixel_buffer, 0, sizeof(dev_status->device_data.mono_data.pixel_buffer));
+    dev_status->device_data.mono_data.pixel_mode_active = false;
+    uint8_t op                                          = 0;
+    chain_status_t status = chains[bus_idx]->setMonoClear(device_id, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    return (status == CHAIN_OK && op == 1) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t chain_bus_mono_scroll(int bus_idx, uint8_t device_id, const char* text, uint8_t dir, uint8_t mode,
+                                uint16_t interval_ms)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_MONO_TYPE_CODE);
+    if (ret != ESP_OK || text == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    chain_bus_mono_init_display(bus_idx, device_id);
+    uint8_t op = 0;
+    chain_status_t status =
+        chains[bus_idx]->setMonoStringScroll(device_id, text, (mono_scroll_dir_t)dir, (mono_scroll_mode_t)mode,
+                                             interval_ms, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    chain_status_t scroll_status = chains[bus_idx]->setMonoStringScrollState(device_id, MONO_SCROLL_STATE_RUNNING, &op,
+                                                                             CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    return (scroll_status == CHAIN_OK && op == 1) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t chain_bus_rgb_set_pixel(int bus_idx, uint8_t device_id, uint8_t x, uint8_t y, uint16_t color)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_RGB_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    chain_device_status_t* dev_status = &bus_status[bus_idx].device_status[device_index];
+    if (!dev_status->device_data.rgb_display_data.pixel_mode_active) {
+        uint8_t op = 0;
+        chain_status_t mode_status =
+            chains[bus_idx]->setRGBMode(device_id, RGB_PIXEL_MODE, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+        if (mode_status != CHAIN_OK || op != 1) {
+            return ESP_FAIL;
+        }
+        dev_status->device_data.rgb_display_data.mode              = RGB_PIXEL_MODE;
+        dev_status->device_data.rgb_display_data.pixel_mode_active = true;
+        memset(dev_status->device_data.rgb_display_data.pixel_buffer, 0,
+               sizeof(dev_status->device_data.rgb_display_data.pixel_buffer));
+    }
+    if (y < 8 && x < 8) {
+        dev_status->device_data.rgb_display_data.pixel_buffer[y * 8 + x] = color;
+    }
+    return chain_bus_rgb_buffer_refresh(bus_idx, device_id, dev_status->device_data.rgb_display_data.pixel_buffer);
+}
+
+esp_err_t chain_bus_rgb_clear(int bus_idx, uint8_t device_id)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_RGB_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    chain_device_status_t* dev_status = &bus_status[bus_idx].device_status[device_index];
+    memset(dev_status->device_data.rgb_display_data.pixel_buffer, 0,
+           sizeof(dev_status->device_data.rgb_display_data.pixel_buffer));
+    dev_status->device_data.rgb_display_data.pixel_mode_active = false;
+    uint8_t op                                                 = 0;
+    chain_status_t status = chains[bus_idx]->setRGBClear(device_id, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    return (status == CHAIN_OK && op == 1) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t chain_bus_rgb_scroll(int bus_idx, uint8_t device_id, const char* text, uint8_t dir, uint8_t mode,
+                               uint16_t interval_ms, uint16_t color)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_RGB_TYPE_CODE);
+    if (ret != ESP_OK || text == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    chain_bus_rgb_init_display(bus_idx, device_id);
+    uint8_t op = 0;
+    chain_status_t status =
+        chains[bus_idx]->setRGBStringScroll(device_id, text, (rgb_scroll_dir_t)dir, (rgb_scroll_mode_t)mode,
+                                            interval_ms, color, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    chain_status_t scroll_status =
+        chains[bus_idx]->setRGBStringScrollState(device_id, RGB_SCROLL_STATE_RUNNING, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    return (scroll_status == CHAIN_OK && op == 1) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t chain_bus_mono_scroll_all(int bus_idx, const char* text, uint8_t dir, uint8_t mode, uint16_t interval_ms)
+{
+    if (text == NULL || bus_idx < 0 || bus_idx >= 2) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t last             = ESP_ERR_NOT_FOUND;
+    chain_bus_status_t* status = &bus_status[bus_idx];
+    for (int i = 0; i < status->device_count; i++) {
+        if (status->device_status[i].connected && status->device_status[i].type == CHAIN_MONO_TYPE_CODE) {
+            esp_err_t ret = chain_bus_mono_scroll(bus_idx, status->device_status[i].id, text, dir, mode, interval_ms);
+            if (ret == ESP_OK) {
+                last = ESP_OK;
+            }
+        }
+    }
+    return last;
+}
+
+esp_err_t chain_bus_rgb_scroll_all(int bus_idx, const char* text, uint8_t dir, uint8_t mode, uint16_t interval_ms,
+                                   uint16_t color)
+{
+    if (text == NULL || bus_idx < 0 || bus_idx >= 2) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t last             = ESP_ERR_NOT_FOUND;
+    chain_bus_status_t* status = &bus_status[bus_idx];
+    for (int i = 0; i < status->device_count; i++) {
+        if (status->device_status[i].connected && status->device_status[i].type == CHAIN_RGB_TYPE_CODE) {
+            esp_err_t ret =
+                chain_bus_rgb_scroll(bus_idx, status->device_status[i].id, text, dir, mode, interval_ms, color);
+            if (ret == ESP_OK) {
+                last = ESP_OK;
+            }
+        }
+    }
+    return last;
+}
+
+esp_err_t chain_bus_servo_set_angle(int bus_idx, uint8_t device_id, uint8_t gpio, uint8_t angle)
+{
+    if (gpio >= 8) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, UNIT_8SERVOS2_CHAIN_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    uint8_t op            = 0;
+    user_gpio_mode_t mode = USER_GPIO_SERVO_MODE;
+    chain_status_t mode_status =
+        chains[bus_idx]->setServosMode(device_id, gpio, mode, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (mode_status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    chain_status_t status = chains[bus_idx]->setServosAngle(device_id, gpio, angle, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status == CHAIN_OK && op == 1) {
+        bus_status[bus_idx].device_status[device_index].device_data.servos_data.angles[gpio] = angle;
+        bus_status[bus_idx].device_status[device_index].status_updated                       = true;
+        return ESP_OK;
+    }
+    return ESP_FAIL;
+}
+
+esp_err_t chain_bus_unitbus_i2c_scan(int bus_idx, uint8_t device_id)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, UNIT_CHAIN_BUS_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    uint8_t addrs[16]     = {0};
+    uint8_t count         = 0;
+    uint8_t op            = 0;
+    chain_status_t status = chains[bus_idx]->getChainBusI2cScanAddr(device_id, &count, addrs, sizeof(addrs), &op,
+                                                                    CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    chain_device_status_t* dev_status                     = &bus_status[bus_idx].device_status[device_index];
+    dev_status->device_data.chain_bus_data.i2c_addr_count = count > 16 ? 16 : count;
+    memcpy(dev_status->device_data.chain_bus_data.i2c_addrs, addrs,
+           dev_status->device_data.chain_bus_data.i2c_addr_count);
+    dev_status->data_updated   = true;
+    dev_status->status_updated = true;
+    snprintf(dev_status->last_event_desc, sizeof(dev_status->last_event_desc), "i2c scan: %d addr(s)", count);
+    dev_status->last_event_time = esp_timer_get_time() / 1000;
+    dev_status->event_updated   = true;
+    return ESP_OK;
+}
+
+void chain_bus_init_device_hardware(int bus_idx, chain_device_status_t* dev_status)
+{
+    if (!dev_status || bus_idx < 0 || bus_idx >= 2) {
+        return;
+    }
+    Chain* chain = chains[bus_idx];
+    uint8_t op   = 0;
+
+    switch (dev_status->type) {
+        case CHAIN_MIC_TYPE_CODE:
+            chain->setMICReportMode(dev_status->id, CHAIN_MIC_REPORT_MODE, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+            chain_bus_apply_mic_config(bus_idx, dev_status->id);
+            break;
+        case CHAIN_PIR_TYPE_CODE:
+            chain->setPIRDetectTriggerMode(dev_status->id, CHAIN_DETECT_REPORT_MODE, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+            break;
+        case CHAIN_DLight_TYPE_CODE:
+            chain_bus_apply_dlight_config(bus_idx, dev_status->id);
+            break;
+        case CHAIN_ENV_TYPE_CODE:
+            chain_bus_apply_env_config(bus_idx, dev_status->id);
+            break;
+        case CHAIN_BUZZER_TYPE_CODE:
+            chain->setBuzzerMode(dev_status->id, BUZZER_MODE_NOTE_PLAY, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+            break;
+        case CHAIN_MONO_TYPE_CODE:
+            chain_bus_mono_init_display(bus_idx, dev_status->id);
+            break;
+        case CHAIN_RGB_TYPE_CODE:
+            chain_bus_rgb_init_display(bus_idx, dev_status->id);
+            break;
+        default:
+            break;
+    }
+}
+
+esp_err_t chain_bus_mono_init_display(int bus_idx, uint8_t device_id)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_MONO_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    uint8_t op   = 0;
+    Chain* chain = chains[bus_idx];
+    if (chain->setMonoMode(device_id, MONO_STRING_SCROLL_MODE, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS) != CHAIN_OK) {
+        return ESP_FAIL;
+    }
+    chain->setMonoRotation(device_id, MONO_ROTATION_0, &op, CHAIN_SAVE_FLASH_DISABLE, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    chain->setMonoBrightness(device_id, MONO_BRIGHTNESS_LEVEL_7, &op, CHAIN_SAVE_FLASH_DISABLE,
+                             CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    bus_status[bus_idx].device_status[device_index].device_data.mono_data.mode = MONO_STRING_SCROLL_MODE;
+    return ESP_OK;
+}
+
+esp_err_t chain_bus_rgb_init_display(int bus_idx, uint8_t device_id)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_RGB_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    uint8_t op   = 0;
+    Chain* chain = chains[bus_idx];
+    if (chain->setRGBMode(device_id, RGB_STRING_SCROLL_MODE, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS) != CHAIN_OK) {
+        return ESP_FAIL;
+    }
+    chain->setRGBRotation(device_id, RGB_ROTATION_0, &op, CHAIN_SAVE_FLASH_DISABLE, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    chain->setRGBBrightness(device_id, 100, &op, CHAIN_SAVE_FLASH_DISABLE, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    bus_status[bus_idx].device_status[device_index].device_data.rgb_display_data.mode = RGB_STRING_SCROLL_MODE;
+    return ESP_OK;
+}
+
+esp_err_t chain_bus_mono_buffer_refresh(int bus_idx, uint8_t device_id, const uint8_t buffer[8])
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_MONO_TYPE_CODE);
+    if (ret != ESP_OK || !buffer) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint8_t op   = 0;
+    Chain* chain = chains[bus_idx];
+    chain->setMonoMode(device_id, MONO_PIXEL_MODE, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    uint8_t local_buf[8];
+    memcpy(local_buf, buffer, 8);
+    chain_status_t status = chain->setMonoBufferRefresh(device_id, local_buf, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    return (status == CHAIN_OK && op == 1) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t chain_bus_rgb_buffer_refresh(int bus_idx, uint8_t device_id, const uint16_t buffer[64])
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_RGB_TYPE_CODE);
+    if (ret != ESP_OK || !buffer) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint8_t op   = 0;
+    Chain* chain = chains[bus_idx];
+    chain->setRGBMode(device_id, RGB_PIXEL_MODE, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    uint16_t local_buf[64];
+    memcpy(local_buf, buffer, sizeof(local_buf));
+    chain_status_t status = chain->setRGBBufferRefresh(device_id, local_buf, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    return (status == CHAIN_OK && op == 1) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t chain_bus_apply_mic_config(int bus_idx, uint8_t device_id)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_MIC_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    chain_device_status_t* dev_status = &bus_status[bus_idx].device_status[device_index];
+    uint8_t op                        = 0;
+    Chain* chain                      = chains[bus_idx];
+    chain_status_t status = chain->setMICThresholdValue(dev_status->id, dev_status->hid_config.mic_config.threshold,
+                                                        &op, CHAIN_SAVE_FLASH_DISABLE, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    status = chain->setMICTriggerInterval(dev_status->id, dev_status->hid_config.mic_config.trigger_interval_ms, &op,
+                                          CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    dev_status->device_data.mic_data.threshold = dev_status->hid_config.mic_config.threshold;
+    return ESP_OK;
+}
+
+esp_err_t chain_bus_apply_dlight_config(int bus_idx, uint8_t device_id)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_DLight_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    chain_device_status_t* dev_status = &bus_status[bus_idx].device_status[device_index];
+    uint8_t op                        = 0;
+    Chain* chain                      = chains[bus_idx];
+    chain_status_t status =
+        chain->setDLightLuxInterruptEnable(dev_status->id, CHAIN_DLIGHT_ENABLE, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    status = chain->setDLightLuxInterruptThreshold(dev_status->id, dev_status->hid_config.dlight_config.high_threshold,
+                                                   dev_status->hid_config.dlight_config.low_threshold, &op,
+                                                   CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    status = chain->setDLightLuxInterruptEventTriggerMode(dev_status->id, CHAIN_DLIGHT_ENABLE, &op,
+                                                          CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+esp_err_t chain_bus_apply_env_config(int bus_idx, uint8_t device_id)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_ENV_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    uint8_t op   = 0;
+    Chain* chain = chains[bus_idx];
+    chain_status_t status =
+        chain->setSPA06TemperatureRate(device_id, CHAIN_ENV_SPA06_RATE_1HZ, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    status = chain->setSPA06PressureRate(device_id, CHAIN_ENV_SPA06_RATE_1HZ, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    status = chain->setSPA06SeaLevelPressure(device_id, 10120, &op, CHAIN_BUS_DEVICE_TIMEOUT_MS);
+    if (status != CHAIN_OK || op != 1) {
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+esp_err_t chain_bus_set_mic_params(int bus_idx, uint8_t device_id, uint16_t threshold, uint16_t interval_ms)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_MIC_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    chain_device_status_t* dev_status                     = &bus_status[bus_idx].device_status[device_index];
+    dev_status->hid_config.mic_config.threshold           = threshold;
+    dev_status->hid_config.mic_config.trigger_interval_ms = interval_ms;
+    dev_status->device_data.mic_data.threshold            = threshold;
+    dev_status->status_updated                            = true;
+    return chain_bus_apply_mic_config(bus_idx, device_id);
+}
+
+esp_err_t chain_bus_set_dlight_params(int bus_idx, uint8_t device_id, uint32_t high_threshold, uint32_t low_threshold)
+{
+    int device_index;
+    esp_err_t ret = chain_bus_validate_device_type(bus_idx, device_id, &device_index, CHAIN_DLight_TYPE_CODE);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    chain_device_status_t* dev_status                   = &bus_status[bus_idx].device_status[device_index];
+    dev_status->hid_config.dlight_config.high_threshold = high_threshold;
+    dev_status->hid_config.dlight_config.low_threshold  = low_threshold;
+    dev_status->status_updated                          = true;
+    return chain_bus_apply_dlight_config(bus_idx, device_id);
 }

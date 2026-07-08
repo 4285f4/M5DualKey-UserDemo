@@ -4,10 +4,10 @@
  *SPDX-License-Identifier: MIT
  */
 
-#ifndef _CHAIN_UART_HPP_
-#define _CHAIN_UART_HPP_
+#ifndef _UNIT_CHAIN_BUS_HPP_
+#define _UNIT_CHAIN_BUS_HPP_
 
-#include <ChainCommon.hpp>
+#include "ChainCommon/ChainCommon.hpp"
 
 /**
  * @brief Maximum size for I2C read operations.
@@ -20,7 +20,7 @@
 #define I2C_WRITE_MAX_SIZE (128)
 
 /**
- * @brief Command types for Chain_Uart communication.
+ * @brief Command types for UnitChainBus communication.
  */
 typedef enum {
     CHAIN_I2C_INIT                  = 0x10, /**< Initialize I2C communication. */
@@ -30,9 +30,11 @@ typedef enum {
     CHAIN_I2C_MEM_WRITE             = 0x14, /**< Write data to specific address on I2C device. */
     CHAIN_I2C_SCAN_ADDR             = 0x15, /**< Scan the I2C address of the connection. */
     CHAIN_GPIO_OUTPUT_INIT          = 0x30, /**< Initialize GPIO for output. */
+    CHAIN_GPIO_SET_OUTPUT_LEVEL     = 0x31, /**< Set the level of output GPIO pin. */
+    CHAIN_GPIO_GET_OUTPUT_LEVEL     = 0x32, /**< Get the level of output GPIO pin. */
     CHAIN_GPIO_INPUT_INIT           = 0x40, /**< Initialize GPIO for input. */
-    CHAIN_GPIO_EXTERNAL_NVIC_INIT   = 0x50, /**< Initialize external interrupt for GPIO. */
     CHAIN_GPIO_READ_GPIO_LEVEL      = 0x41, /**< Read the level of input GPIO pin. */
+    CHAIN_GPIO_EXTERNAL_NVIC_INIT   = 0x50, /**< Initialize external interrupt for GPIO. */
     CHAIN_GPIO_ADC_INIT             = 0x60, /**< Initialize ADC for GPIO. */
     CHAIN_GPIO_ADC_READ             = 0x61, /**< Read data from GPIO ADC. */
     CHAIN_GET_WORK_STATION          = 0x70, /**< Query the working status of the system. */
@@ -40,12 +42,12 @@ typedef enum {
 } uart_cmd_t;
 
 /**
- * @brief Enumeration for Chain_Uart operation status.
+ * @brief Enumeration for UnitChainBus operation status.
  */
 typedef enum {
-    CHAIN_UART_OPERATION_FAIL    = 0x00, /**< Operation failed. */
-    CHAIN_UART_OPERATION_SUCCESS = 0x01, /**< Operation successful. */
-    CHAIN_WORK_MODE_MISMATCHED   = 0x02, /**< Work mode mismatched. */
+    CHAIN_BUS_OPERATION_FAIL    = 0x00, /**< Operation failed. */
+    CHAIN_BUS_OPERATION_SUCCESS = 0x01, /**< Operation successful. */
+    CHAIN_WORK_MODE_MISMATCHED  = 0x02, /**< Work mode mismatched. */
 } chain_uart_operation_t;
 
 /**
@@ -98,16 +100,6 @@ typedef enum {
 } gpio_pull_t;
 
 /**
- * @brief Enumeration for GPIO speed settings.
- */
-typedef enum {
-    CHAIN_GPIO_SPEED_FREQ_LOW       = 0x00,  // Low speed setting
-    CHAIN_GPIO_SPEED_FREQ_MEDIUM    = 0x01,  // Medium speed setting
-    CHAIN_GPIO_SPEED_FREQ_HIGH      = 0x02,  // High speed setting
-    CHAIN_GPIO_SPEED_FREQ_VERY_HIGH = 0x03   // Very high speed setting
-} gpio_speed_t;
-
-/**
  * @brief Enumeration for external interrupt trigger sources.
  */
 typedef enum {
@@ -115,14 +107,6 @@ typedef enum {
     CHAIN_GPIO_MODE_IT_FALLING        = 0x01,  // Interrupt on falling edge
     CHAIN_GPIO_MODE_IT_RISING_FALLING = 0x02   // Interrupt on both rising and falling edges
 } nvic_trigger_t;
-
-/**
- * @brief Enumeration for ADC channel states.
- */
-typedef enum {
-    CHAIN_ADC_CHANNEL_DISABLE = 0x00,  // Disable the ADC channel (set to 0)
-    CHAIN_ADC_CHANNEL_ENABLE  = 0x01,  // Enable the ADC channel (set to 1)
-} adc_mode_t;
 
 /**
  * @brief Enumeration for working status of GPIO pin.
@@ -136,15 +120,15 @@ typedef enum {
     CHAIN_I2C_WORK_STATUS    = 0x05   // I2C working status
 } work_status_t;
 
-class ChainUart : virtual public ChainCommon {
+class UnitChainBus : virtual public ChainCommon {
 public:
     /**
-     * @brief Sets the Chain_Uart I2C mode with specified I2C speed.
+     * @brief Sets the UnitChainBus I2C mode with specified I2C speed.
      *
-     * This function configures the specified Chain_Uart device to operate in I2C mode, setting the I2C communication
+     * This function configures the specified UnitChainBus device to operate in I2C mode, setting the I2C communication
      * speed. The operation status is returned via the `operationStatus` parameter:
-     * - `CHAIN_UART_OPERATION_FAIL` for failure
-     * - `CHAIN_UART_OPERATION_SUCCESS` for success
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
      * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      *
      * @param id Device position in the chain (starting from 1).
@@ -152,24 +136,24 @@ public:
      *                 - `CHAIN_I2C_LOW_SPEED_100KHZ` for 100 kHz
      *                 - `CHAIN_I2C_HIGH_SPEED_400KHZ` for 400 kHz
      * @param operationStatus Pointer to store the result of the operation, indicating the status of the operation:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
      *
      * @return Returns the status of the operation (success or failure).
      */
-    chain_status_t setUartI2cMode(uint8_t id, i2c_speed_t i2cSpeed, uint8_t *operationStatus,
-                                  unsigned long timeout = 100);
+    chain_status_t setChainBusI2cMode(uint8_t id, i2c_speed_t i2cSpeed, uint8_t *operationStatus,
+                                      unsigned long timeout = 100);
 
     /**
-     * @brief Reads data from an I2C device through Chain_Uart.
+     * @brief Reads data from an I2C device through UnitChainBus.
      *
-     * This function reads a specified amount of data from an I2C device using Chain_Uart. The data is read from the
+     * This function reads a specified amount of data from an I2C device using UnitChainBus. The data is read from the
      * I2C device at the specified address and stored in the `buffer`. The operation status is returned via the
      * `operationStatus` parameter:
-     * - `CHAIN_UART_OPERATION_FAIL` for failure
-     * - `CHAIN_UART_OPERATION_SUCCESS` for success
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
      * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      *
      * @param id Device position in the chain (starting from 1).
@@ -177,23 +161,23 @@ public:
      * @param readLength Number of bytes to read from the I2C device, must not exceed `I2C_READ_MAX_SIZE`.
      * @param buffer Pointer to the buffer where the read data will be stored.
      * @param operationStatus Pointer to store the result of the operation, indicating the status:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
      *
      * @return Returns the status of the operation (success or failure).
      */
-    chain_status_t uartI2cRead(uint8_t id, uint8_t i2cAddr, uint8_t readLength, uint8_t *buffer,
-                               uint8_t *operationStatus, unsigned long timeout = 100);
+    chain_status_t chainBusI2cRead(uint8_t id, uint8_t i2cAddr, uint8_t readLength, uint8_t *buffer,
+                                   uint8_t *operationStatus, unsigned long timeout = 100);
 
     /**
-     * @brief Writes data to an I2C device through Chain_Uart.
+     * @brief Writes data to an I2C device through UnitChainBus.
      *
-     * This function writes a specified amount of data to an I2C device using Chain_Uart. The data to be written is
+     * This function writes a specified amount of data to an I2C device using UnitChainBus. The data to be written is
      * provided in the `buffer`, and the operation status is returned via the `operationStatus` parameter:
-     * - `CHAIN_UART_OPERATION_FAIL` for failure
-     * - `CHAIN_UART_OPERATION_SUCCESS` for success
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
      * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      *
      * @param id Device position in the chain (starting from 1).
@@ -202,25 +186,25 @@ public:
      * (128 bytes).
      * @param buffer Pointer to the buffer containing the data to be written to the I2C device.
      * @param operationStatus Pointer to store the result of the operation, indicating the status:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
      *
      * @return Returns the status of the operation (success or failure).
      */
-    chain_status_t uartI2cWrite(uint8_t id, uint8_t i2cAddr, uint8_t writeLength, uint8_t *buffer,
-                                uint8_t *operationStatus, unsigned long timeout = 100);
+    chain_status_t chainBusI2cWrite(uint8_t id, uint8_t i2cAddr, uint8_t writeLength, uint8_t *buffer,
+                                    uint8_t *operationStatus, unsigned long timeout = 100);
 
     /**
-     * @brief Reads data from a specific memory address of an I2C device through Chain_Uart.
+     * @brief Reads data from a specific memory address of an I2C device through UnitChainBus.
      *
-     * This function reads data from a specified register address on an I2C device using Chain_Uart. The register
+     * This function reads data from a specified register address on an I2C device using UnitChainBus. The register
      * address is provided in `regAddr` and its length is specified by `regLength`. The data to be read is returned
      * in the `buffer`, and the number of bytes to read is specified by `readLength`. The maximum value of `readLength`
      * cannot exceed `I2C_READ_MAX_SIZE`. The operation status is returned via the `operationStatus` parameter:
-     * - `CHAIN_UART_OPERATION_FAIL` for failure
-     * - `CHAIN_UART_OPERATION_SUCCESS` for success
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
      * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      *
      * @param id Device position in the chain (starting from 1).
@@ -231,26 +215,26 @@ public:
      * @param readLength Number of bytes to read from the I2C device, must not exceed `I2C_READ_MAX_SIZE`.
      * @param buffer Pointer to the buffer to store the data read from the I2C device.
      * @param operationStatus Pointer to store the result of the operation, indicating the status:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
      *
      * @return Returns the status of the operation (success or failure).
      */
-    chain_status_t uartI2cMemRead(uint8_t id, uint8_t i2cAddr, uint16_t regAddr, i2c_reg_len_t regLength,
-                                  uint8_t readLength, uint8_t *buffer, uint8_t *operationStatus,
-                                  unsigned long timeout = 100);
+    chain_status_t chainBusI2cMemRead(uint8_t id, uint8_t i2cAddr, uint16_t regAddr, i2c_reg_len_t regLength,
+                                      uint8_t readLength, uint8_t *buffer, uint8_t *operationStatus,
+                                      unsigned long timeout = 100);
 
     /**
-     * @brief Writes data to a specific memory address of an I2C device through Chain_Uart.
+     * @brief Writes data to a specific memory address of an I2C device through UnitChainBus.
      *
-     * This function writes data to a specified register address on an I2C device using Chain_Uart. The register
+     * This function writes data to a specified register address on an I2C device using UnitChainBus. The register
      * address is provided in `regAddr` and its length is specified by `regLength`. The data to be written is
      * provided in the `buffer`, and the number of bytes to write is specified by `writeLength`. The operation
      * status is returned via the `operationStatus` parameter:
-     * - `CHAIN_UART_OPERATION_FAIL` for failure
-     * - `CHAIN_UART_OPERATION_SUCCESS` for success
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
      * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      *
      * The `writeLength` parameter cannot exceed the maximum allowed size defined by `I2C_WRITE_MAX_SIZE` (128 bytes).
@@ -264,25 +248,25 @@ public:
      * (128 bytes).
      * @param buffer Pointer to the buffer containing the data to be written to the I2C device.
      * @param operationStatus Pointer to store the result of the operation, indicating the status:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
      *
      * @return Returns the status of the operation (success or failure).
      */
-    chain_status_t uartI2cMemWrite(uint8_t id, uint8_t i2cAddr, uint16_t regAddr, i2c_reg_len_t regLength,
-                                   uint8_t writeLength, uint8_t *buffer, uint8_t *operationStatus,
-                                   unsigned long timeout = 100);
+    chain_status_t chainBusI2cMemWrite(uint8_t id, uint8_t i2cAddr, uint16_t regAddr, i2c_reg_len_t regLength,
+                                       uint8_t writeLength, uint8_t *buffer, uint8_t *operationStatus,
+                                       unsigned long timeout = 100);
 
     /**
-     * @brief Scans for available I2C addresses using Chain_Uart.
+     * @brief Scans for available I2C addresses using UnitChainBus.
      *
-     * This function scans for available I2C addresses by sending a request through Chain_Uart. The addresses of
+     * This function scans for available I2C addresses by sending a request through UnitChainBus. The addresses of
      * the I2C devices connected to the bus are returned in the `buffer`, and the number of addresses found is
      * returned in `i2cAddrNums`. The operation status is returned via the `operationStatus` parameter:
-     * - `CHAIN_UART_OPERATION_FAIL` for failure
-     * - `CHAIN_UART_OPERATION_SUCCESS` for success
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
      * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      *
      * @param id Device position in the chain (starting from 1).
@@ -290,104 +274,147 @@ public:
      * @param buffer Pointer to a buffer that will store the list of scanned I2C addresses.
      * @param size Size of the buffer in bytes.
      * @param operationStatus Pointer to store the result of the operation, indicating the status:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
      *
      * @return Returns the status of the operation (success or failure).
      */
-    chain_status_t getUartI2cScanAddr(uint8_t id, uint8_t *i2cAddrNums, uint8_t *buffer, uint8_t size,
-                                      uint8_t *operationStatus, unsigned long timeout = 100);
+    chain_status_t getChainBusI2cScanAddr(uint8_t id, uint8_t *i2cAddrNums, uint8_t *buffer, uint8_t size,
+                                          uint8_t *operationStatus, unsigned long timeout = 100);
 
     /**
-     * @brief Initializes a UART GPIO pin for output using Chain_Uart.
+     * @brief Initializes a UART GPIO pin for output using UnitChainBus.
      *
      * This function initializes a specified GPIO pin for output mode with the given configuration parameters.
      * The GPIO pin is identified by `gpio`, and the output level is set to `gpioLevel`. The output mode is
      * specified by `gpioOutputMode`, and the pull-up or pull-down resistor is enabled using `gpioPull`. The
      * speed of the GPIO pin is set to `gpioSpeed`. The operation status is returned via the `operationStatus`
      * parameter:
-     * - `CHAIN_UART_OPERATION_FAIL` for failure
-     * - `CHAIN_UART_OPERATION_SUCCESS` for success
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
      * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      *
      * @param id Device position in the chain (starting from 1).
      * @param gpio GPIO pin to initialize for output.
-     * @param gpioLevel Output level to set (refer to `gpio_level_t`).
      * @param gpioOutputMode Output mode to set (refer to `gpio_output_t`).
      * @param gpioPull Pull-up or pull-down resistor to enable (refer to `gpio_pull_t`).
-     * @param gpioSpeed Speed of the GPIO pin (refer to `gpio_speed_t`).
      * @param operationStatus Pointer to store the result of the operation, indicating the status:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
      *
      * @return Returns the status of the operation (success or failure).
      */
-    chain_status_t setUartOutputMode(uint8_t id, gpio_pin_t gpio, gpio_level_t gpioLevel, uint8_t *operationStatus,
-                                     gpio_output_t gpioOutputMode = CHAIN_GPIO_OUTPUT_PUSHPULL,
-                                     gpio_pull_t gpioPull         = CHAIN_GPIO_PULL_NO,
-                                     gpio_speed_t gpioSpeed       = CHAIN_GPIO_SPEED_FREQ_MEDIUM,
-                                     unsigned long timeout        = 100);
+    chain_status_t setChainBusOutputMode(uint8_t id, gpio_pin_t gpio, gpio_output_t gpioOutputMode,
+                                         gpio_pull_t gpioPull, uint8_t *operationStatus, unsigned long timeout = 100);
 
     /**
-     * @brief Initializes a UART GPIO pin for input using Chain_Uart.
+     * @brief Sets the output level of a UART GPIO pin.
+     *
+     * This function sets the output level (high or low) of the specified UART GPIO pin.
+     * The target pin is identified by `gpio`, and the desired output level is specified by `gpioLevel`.
+     * The operation status is returned via the `operationStatus` parameter:
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
+     * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
+     *
+     * @param id Device position in the chain (starting from 1).
+     * @param gpio GPIO pin to set output level.
+     * @param gpioLevel Output level to set (refer to `gpio_level_t`).
+     * @param operationStatus Pointer to store the result of the operation, indicating the status:
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
+     * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
+     *
+     * @return Returns the status of the operation (success or failure).
+     */
+    chain_status_t setChainBusOutputLevel(uint8_t id, gpio_pin_t gpio, gpio_level_t gpioLevel, uint8_t *operationStatus,
+                                          unsigned long timeout = 100);
+
+    /**
+     * @brief Reads the output level of a UART GPIO pin.
+     *
+     * This function reads the current output level of the specified UART GPIO pin and stores it in
+     * the provided `gpioLevel` variable. The operation status is returned via the `operationStatus`
+     * parameter:
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
+     * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
+     *
+     * @param id Device position in the chain (starting from 1).
+     * @param gpio GPIO pin to read output level.
+     * @param gpioLevel Pointer to store the read output level (refer to `gpio_level_t`).
+     * @param operationStatus Pointer to store the result of the operation, indicating the status:
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
+     * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
+     *
+     * @return Returns the status of the operation (success or failure).
+     */
+    chain_status_t getChainBusOutputLevel(uint8_t id, gpio_pin_t gpio, gpio_level_t *gpioLevel,
+                                          uint8_t *operationStatus, unsigned long timeout = 100);
+
+    /**
+     * @brief Initializes a UART GPIO pin for input using UnitChainBus.
      *
      * This function initializes a specified GPIO pin for input mode with the given configuration parameters.
      * The GPIO pin is identified by `gpio`, and the pull-up or pull-down resistor is enabled using `gpioPull`.
      * The operation status is returned via the `operationStatus` parameter:
-     * - `CHAIN_UART_OPERATION_FAIL` for failure
-     * - `CHAIN_UART_OPERATION_SUCCESS` for success
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
      * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      *
      * @param id Device position in the chain (starting from 1).
      * @param gpio GPIO pin to initialize for input.
      * @param gpioPull Pull-up or pull-down resistor to enable (refer to `gpio_pull_t`).
      * @param operationStatus Pointer to store the result of the operation, indicating the status:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
      *
      * @return Returns the status of the operation (success or failure).
      */
-    chain_status_t setUartInputMode(uint8_t id, gpio_pin_t gpio, gpio_pull_t gpioPull, uint8_t *operationStatus,
-                                    unsigned long timeout = 100);
+    chain_status_t setChainBusInputMode(uint8_t id, gpio_pin_t gpio, gpio_pull_t gpioPull, uint8_t *operationStatus,
+                                        unsigned long timeout = 100);
 
     /**
-     * @brief Reads the input level of a UART GPIO pin using Chain_Uart.
+     * @brief Reads the input level of a UART GPIO pin using UnitChainBus.
      *
      * This function reads the input level of a specified GPIO pin for input mode with the given configuration
      * parameters. The GPIO pin is identified by `gpio`, and the pull-up or pull-down resistor is enabled using
      * `gpioPull`. The operation status is returned via the `operationStatus` parameter:
-     * - `CHAIN_UART_OPERATION_FAIL` for failure
-     * - `CHAIN_UART_OPERATION_SUCCESS` for success
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
      * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      *
      * @param id Device position in the chain (starting from 1).
      * @param gpio GPIO pin to initialize for input.
      * @param gpioPull Pull-up or pull-down resistor to enable (refer to `gpio_pull_t`).
      * @param operationStatus Pointer to store the result of the operation, indicating the status:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
      *
      * @return Returns the status of the operation (success or failure).
      */
-    chain_status_t getUartInputLevel(uint8_t id, gpio_pin_t gpio, uint8_t *gpioLevel, uint8_t *operationStatus,
-                                     unsigned long timeout = 100);
+    chain_status_t getChainBusInputLevel(uint8_t id, gpio_pin_t gpio, uint8_t *gpioLevel, uint8_t *operationStatus,
+                                         unsigned long timeout = 100);
 
     /**
-     * @brief Initializes a UART GPIO pin for input using Chain_Uart.
+     * @brief Initializes a UART GPIO pin for input using UnitChainBus.
      *
      * This function initializes a specified GPIO pin for input mode with the given configuration parameters.
      * The GPIO pin is identified by `gpio`, and the pull-up or pull-down resistor is enabled using `gpioPull`.
      * The operation status is returned via the `operationStatus` parameter:
-     * - `CHAIN_UART_OPERATION_FAIL` for failure
-     * - `CHAIN_UART_OPERATION_SUCCESS` for success
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
      * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      *
      * @param id Device position in the chain (starting from 1).
@@ -395,16 +422,16 @@ public:
      * @param gpioPull Pull-up or pull-down resistor to enable (refer to `gpio_pull_t`).
      * @param triggerMode Trigger mode to enable (refer to `nvic_trigger_t`).
      * @param operationStatus Pointer to store the result of the operation, indicating the status:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
      *
      * @return Returns the status of the operation (success or failure).
      */
 
-    chain_status_t setUartNvicMode(uint8_t id, gpio_pin_t gpio, gpio_pull_t gpioPull, nvic_trigger_t triggerMode,
-                                   uint8_t *operationStatus, unsigned long timeout = 100);
+    chain_status_t setChainBusNvicMode(uint8_t id, gpio_pin_t gpio, gpio_pull_t gpioPull, nvic_trigger_t triggerMode,
+                                       uint8_t *operationStatus, unsigned long timeout = 100);
 
     /**
      * @brief Gets the UART NVIC trigger status.
@@ -416,47 +443,52 @@ public:
      *
      * @return Returns true if the operation is successful, false otherwise.
      */
-    bool getUartNvicTriggerStatus(uint8_t id, uint16_t *status);
+    bool getChainBusNvicTriggerStatus(uint8_t id, uint16_t *status);
 
     /**
-     * @brief Sets the UART ADC mode.
+     * @brief Sets the ADC mode for a UART device.
      *
-     * This function sets the ADC mode of the UART device.
+     * Configures the specified GPIO pin of a UART device to operate in ADC mode.
+     * This allows the UART device to read analog input signals through the given GPIO pin.
+     * The operation status is returned via the `operationStatus` parameter:
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *
      * @param id Device position in the chain (starting from 1).
-     * @param channel1 ADC channel 1.
-     * @param channel2 ADC channel 2.
-     * @param operationStatus Pointer to store the result of the operation, indicating the status:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
+     * @param gpio GPIO pin to configure in ADC mode.
+     * @param operationStatus Pointer to store the result of the operation:
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
+     * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
+     *
+     * @return Returns the status of the operation (see @ref chain_status_t).
+     */
+    chain_status_t setChainBusAdcMode(uint8_t id, gpio_pin_t gpio, uint8_t *operationStatus,
+                                      unsigned long timeout = 100);
+
+    /**
+     * @brief Retrieves the ADC value from a UART device.
+     *
+     * Reads the analog-to-digital conversion (ADC) value from the specified GPIO pin
+     * of a UART device and stores the result in the provided `value` pointer.
+     * The operation status is returned via the `operationStatus` parameter:
+     * - `CHAIN_BUS_OPERATION_FAIL` for failure
+     * - `CHAIN_BUS_OPERATION_SUCCESS` for success
+     * - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
+     *
+     * @param id Device position in the chain (starting from 1).
+     * @param gpio GPIO pin to read ADC value.
+     * @param value Pointer to store the read ADC value.
+     * @param operationStatus Pointer to store the result of the operation:
+     *                        - `CHAIN_BUS_OPERATION_FAIL` for failure
+     *                        - `CHAIN_BUS_OPERATION_SUCCESS` for success
      *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
      * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
      *
-     * @return Returns the status of the operation (success or failure).
+     * @return Returns the execution status of the ADC reading (see @ref chain_status_t).
      */
-
-    chain_status_t setUartAdcMode(uint8_t id, adc_mode_t channel1, adc_mode_t channel2, uint8_t *operationStatus,
-                                  unsigned long timeout = 100);
-
-    /**
-     * @brief Gets the UART ADC value.
-     *
-     * This function returns the ADC value of the UART device.
-     *
-     * @param id Device position in the chain (starting from 1).
-     * @param channelNums Number of ADC channels.
-     * @param buffer Pointer to store the ADC values.
-     * @param size Size of the buffer.
-     * @param operationStatus Pointer to store the result of the operation, indicating the status:
-     *                        - `CHAIN_UART_OPERATION_FAIL` for failure
-     *                        - `CHAIN_UART_OPERATION_SUCCESS` for success
-     *                        - `CHAIN_WORK_MODE_MISMATCHED` for mode mismatch
-     * @param timeout Timeout in milliseconds for the operation (default is 100 ms).
-     *
-     * @return Returns the ADC value of the UART device.
-     */
-    chain_status_t getUartAdcValue(uint8_t id, uint8_t *channelNums, uint8_t *buffer, uint8_t size,
-                                   uint8_t *operationStatus, unsigned long timeout = 100);
+    chain_status_t getChainBusAdcValue(uint8_t id, gpio_pin_t gpio, uint16_t *value, uint8_t *operationStatus,
+                                       unsigned long timeout = 100);
 
     /**
      * @brief Gets the UART work status.
@@ -469,9 +501,10 @@ public:
      *
      * @return Returns the UART work status.
      */
-    chain_status_t getUartWorkMode(uint8_t id, work_status_t *gpio1, work_status_t *gpio2, unsigned long timeout = 100);
+    chain_status_t getChainBusWorkMode(uint8_t id, work_status_t *gpio1, work_status_t *gpio2,
+                                       unsigned long timeout = 100);
 
 private:
 };
 
-#endif  // _CHAIN_UART_HPP_
+#endif  // _UNIT_CHAIN_BUS_HPP_

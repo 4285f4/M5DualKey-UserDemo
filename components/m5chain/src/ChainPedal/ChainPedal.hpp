@@ -1,12 +1,12 @@
 /*
- * SPDX-FileCopyrightText: 2025 M5Stack Technology CO LTD
+ * SPDX-FileCopyrightText: 2026 M5Stack Technology CO LTD
  *
  * SPDX-License-Identifier: MIT
  */
 
 #ifndef _CHAIN_PEDAL_HPP_
 #define _CHAIN_PEDAL_HPP_
-#include <ChainCommon.hpp>
+#include <ChainCommon/ChainCommon.hpp>
 
 /**
  * @brief Maximum RGB overlay value for the pedal device.

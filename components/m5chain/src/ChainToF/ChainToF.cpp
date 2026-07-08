@@ -4,7 +4,7 @@
  *SPDX-License-Identifier: MIT
  */
 
-#include "ChainToF.hpp"
+#include "ChainToF/ChainToF.hpp"
 
 chain_status_t ChainToF::getToFDistance(uint8_t id, uint16_t *distance, unsigned long timeout)
 {
@@ -30,8 +30,7 @@ chain_status_t ChainToF::getToFDistance(uint8_t id, uint16_t *distance, unsigned
     return status;
 }
 
-chain_status_t ChainToF::setToFMeasureTime(uint8_t id, uint8_t time, uint8_t *operationStatus,
-                                               unsigned long timeout)
+chain_status_t ChainToF::setToFMeasureTime(uint8_t id, uint8_t time, uint8_t *operationStatus, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -86,7 +85,7 @@ chain_status_t ChainToF::getToFMeasureTime(uint8_t id, uint8_t *time, unsigned l
 }
 
 chain_status_t ChainToF::setToFMeasureMode(uint8_t id, chain_tof_mode_t mode, uint8_t *operationStatus,
-                                               unsigned long timeout)
+                                           unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -139,8 +138,8 @@ chain_status_t ChainToF::getToFMeasureMode(uint8_t id, chain_tof_mode_t *mode, u
     return status;
 }
 
-chain_status_t ChainToF::setToFMeasureStatus(uint8_t id, chain_tof_measure_status_t measureStatus, uint8_t *operationStatus,
-                                                 unsigned long timeout)
+chain_status_t ChainToF::setToFMeasureStatus(uint8_t id, chain_tof_measure_status_t measureStatus,
+                                             uint8_t *operationStatus, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -169,7 +168,8 @@ chain_status_t ChainToF::setToFMeasureStatus(uint8_t id, chain_tof_measure_statu
     return status;
 }
 
-chain_status_t ChainToF::getToFMeasureStatus(uint8_t id, chain_tof_measure_status_t *measureStatus, unsigned long timeout)
+chain_status_t ChainToF::getToFMeasureStatus(uint8_t id, chain_tof_measure_status_t *measureStatus,
+                                             unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -193,8 +193,8 @@ chain_status_t ChainToF::getToFMeasureStatus(uint8_t id, chain_tof_measure_statu
     return status;
 }
 
-
-chain_status_t ChainToF::getToFMeasureCompleteFlag(uint8_t id, uint8_t *completeFlag, unsigned long timeout){
+chain_status_t ChainToF::getToFMeasureCompleteFlag(uint8_t id, uint8_t *completeFlag, unsigned long timeout)
+{
     chain_status_t status = CHAIN_OK;
 
     if (acquireMutex()) {

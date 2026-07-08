@@ -4,7 +4,7 @@
  *SPDX-License-Identifier: MIT
  */
 
-#include "ChainJoystick.hpp"
+#include "ChainJoystick/ChainJoystick.hpp"
 
 chain_status_t ChainJoystick::getJoystick16Adc(uint8_t id, uint16_t *xAdcValue, uint16_t *yAdcValue,
                                                unsigned long timeout)
@@ -60,8 +60,7 @@ chain_status_t ChainJoystick::getJoystickMappedRange(uint8_t id, uint16_t *mapBu
 {
     chain_status_t status = CHAIN_OK;
 
-    if(size != JOYSTICK_MAP_SIZE)
-    {
+    if (size != JOYSTICK_MAP_SIZE) {
         return CHAIN_PARAMETER_ERROR;
     }
 
@@ -93,8 +92,7 @@ chain_status_t ChainJoystick::setJoystickMappedRange(uint8_t id, uint16_t *mapBu
 {
     chain_status_t status = CHAIN_OK;
 
-    if(size != JOYSTICK_MAP_SIZE)
-    {
+    if (size != JOYSTICK_MAP_SIZE) {
         return CHAIN_PARAMETER_ERROR;
     }
 
@@ -119,7 +117,7 @@ chain_status_t ChainJoystick::setJoystickMappedRange(uint8_t id, uint16_t *mapBu
     } else {
         status = CHAIN_BUSY;
     }
-    
+
     return status;
 }
 
@@ -200,9 +198,10 @@ chain_status_t ChainJoystick::getJoystickButtonStatus(uint8_t id, uint8_t *keySt
     return status;
 }
 
-chain_status_t ChainJoystick::setJoystickButtonTriggerInterval(uint8_t id, button_double_click_time_t doubleClickIntervalMs,
-                                                              button_long_press_time_t longPressIntervalMs, uint8_t *operationStatus,
-                                                              unsigned long timeout)
+chain_status_t ChainJoystick::setJoystickButtonTriggerInterval(uint8_t id,
+                                                               button_double_click_time_t doubleClickIntervalMs,
+                                                               button_long_press_time_t longPressIntervalMs,
+                                                               uint8_t *operationStatus, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -228,8 +227,10 @@ chain_status_t ChainJoystick::setJoystickButtonTriggerInterval(uint8_t id, butto
     return status;
 }
 
-chain_status_t ChainJoystick::getJoystickButtonTriggerInterval(uint8_t id, button_double_click_time_t *doubleClickIntervalMs,
-                                                              button_long_press_time_t *longPressIntervalMs, unsigned long timeout)
+chain_status_t ChainJoystick::getJoystickButtonTriggerInterval(uint8_t id,
+                                                               button_double_click_time_t *doubleClickIntervalMs,
+                                                               button_long_press_time_t *longPressIntervalMs,
+                                                               unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 

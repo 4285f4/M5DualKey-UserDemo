@@ -7,7 +7,7 @@
 #ifndef _CHAIN_ENCODER_HPP_
 #define _CHAIN_ENCODER_HPP_
 
-#include <ChainCommon.hpp>
+#include "ChainCommon/ChainCommon.hpp"
 
 /**
  * @brief Enumeration for AB pin status.

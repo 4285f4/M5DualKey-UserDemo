@@ -4,10 +4,10 @@
  *SPDX-License-Identifier: MIT
  */
 
-#include "ChainUart.hpp"
+#include "UnitChainBus/UnitChainBus.hpp"
 
-chain_status_t ChainUart::setUartI2cMode(uint8_t id, i2c_speed_t i2cSpeed, uint8_t *operationStatus,
-                                         unsigned long timeout)
+chain_status_t UnitChainBus::setChainBusI2cMode(uint8_t id, i2c_speed_t i2cSpeed, uint8_t *operationStatus,
+                                                unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -36,8 +36,8 @@ chain_status_t ChainUart::setUartI2cMode(uint8_t id, i2c_speed_t i2cSpeed, uint8
     return status;
 }
 
-chain_status_t ChainUart::uartI2cRead(uint8_t id, uint8_t i2cAddr, uint8_t readLength, uint8_t *buffer,
-                                      uint8_t *operationStatus, unsigned long timeout)
+chain_status_t UnitChainBus::chainBusI2cRead(uint8_t id, uint8_t i2cAddr, uint8_t readLength, uint8_t *buffer,
+                                             uint8_t *operationStatus, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -49,7 +49,7 @@ chain_status_t ChainUart::uartI2cRead(uint8_t id, uint8_t i2cAddr, uint8_t readL
         if (waitForData(id, CHAIN_I2C_READ, timeout)) {
             if (checkPacket(returnPacket, returnPacketSize)) {
                 *operationStatus = returnPacket[6];
-                if (returnPacket[6] == CHAIN_UART_OPERATION_SUCCESS) {
+                if (returnPacket[6] == CHAIN_BUS_OPERATION_SUCCESS) {
                     for (uint8_t i = 0; i < readLength; i++) {
                         buffer[i] = returnPacket[7 + i];
                     }
@@ -68,8 +68,8 @@ chain_status_t ChainUart::uartI2cRead(uint8_t id, uint8_t i2cAddr, uint8_t readL
     return status;
 }
 
-chain_status_t ChainUart::uartI2cWrite(uint8_t id, uint8_t i2cAddr, uint8_t writeLength, uint8_t *buffer,
-                                       uint8_t *operationStatus, unsigned long timeout)
+chain_status_t UnitChainBus::chainBusI2cWrite(uint8_t id, uint8_t i2cAddr, uint8_t writeLength, uint8_t *buffer,
+                                              uint8_t *operationStatus, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -102,9 +102,9 @@ chain_status_t ChainUart::uartI2cWrite(uint8_t id, uint8_t i2cAddr, uint8_t writ
 
     return status;
 }
-chain_status_t ChainUart::uartI2cMemRead(uint8_t id, uint8_t i2cAddr, uint16_t regAddr, i2c_reg_len_t regLength,
-                                         uint8_t readLength, uint8_t *buffer, uint8_t *operationStatus,
-                                         unsigned long timeout)
+chain_status_t UnitChainBus::chainBusI2cMemRead(uint8_t id, uint8_t i2cAddr, uint16_t regAddr, i2c_reg_len_t regLength,
+                                                uint8_t readLength, uint8_t *buffer, uint8_t *operationStatus,
+                                                unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -119,7 +119,7 @@ chain_status_t ChainUart::uartI2cMemRead(uint8_t id, uint8_t i2cAddr, uint16_t r
         if (waitForData(id, CHAIN_I2C_MEM_READ, timeout)) {
             if (checkPacket(returnPacket, returnPacketSize)) {
                 *operationStatus = returnPacket[6];
-                if (*operationStatus == CHAIN_UART_OPERATION_SUCCESS) {
+                if (*operationStatus == CHAIN_BUS_OPERATION_SUCCESS) {
                     for (uint8_t i = 0; i < readLength; i++) {
                         buffer[i] = returnPacket[7 + i];
                     }
@@ -138,9 +138,9 @@ chain_status_t ChainUart::uartI2cMemRead(uint8_t id, uint8_t i2cAddr, uint16_t r
     return status;
 }
 
-chain_status_t ChainUart::uartI2cMemWrite(uint8_t id, uint8_t i2cAddr, uint16_t regAddr, i2c_reg_len_t regLength,
-                                          uint8_t writeLength, uint8_t *buffer, uint8_t *operationStatus,
-                                          unsigned long timeout)
+chain_status_t UnitChainBus::chainBusI2cMemWrite(uint8_t id, uint8_t i2cAddr, uint16_t regAddr, i2c_reg_len_t regLength,
+                                                 uint8_t writeLength, uint8_t *buffer, uint8_t *operationStatus,
+                                                 unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -172,8 +172,8 @@ chain_status_t ChainUart::uartI2cMemWrite(uint8_t id, uint8_t i2cAddr, uint16_t 
     return status;
 }
 
-chain_status_t ChainUart::getUartI2cScanAddr(uint8_t id, uint8_t *i2cAddrNums, uint8_t *buffer, uint8_t size,
-                                             uint8_t *operationStatus, unsigned long timeout)
+chain_status_t UnitChainBus::getChainBusI2cScanAddr(uint8_t id, uint8_t *i2cAddrNums, uint8_t *buffer, uint8_t size,
+                                                    uint8_t *operationStatus, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -183,7 +183,7 @@ chain_status_t ChainUart::getUartI2cScanAddr(uint8_t id, uint8_t *i2cAddrNums, u
         if (waitForData(id, CHAIN_I2C_SCAN_ADDR, timeout)) {
             if (checkPacket(returnPacket, returnPacketSize)) {
                 *operationStatus = returnPacket[6];
-                if (*operationStatus == CHAIN_UART_OPERATION_SUCCESS) {
+                if (*operationStatus == CHAIN_BUS_OPERATION_SUCCESS) {
                     *i2cAddrNums = returnPacket[7];
                     if (returnPacket[7] > size) {
                         status = CHAIN_PARAMETER_ERROR;
@@ -207,19 +207,17 @@ chain_status_t ChainUart::getUartI2cScanAddr(uint8_t id, uint8_t *i2cAddrNums, u
     return status;
 }
 
-chain_status_t ChainUart::setUartOutputMode(uint8_t id, gpio_pin_t gpio, gpio_level_t gpioLevel,
-                                            uint8_t *operationStatus, gpio_output_t gpioOutputMode,
-                                            gpio_pull_t gpioPull, gpio_speed_t gpioSpeed, unsigned long timeout)
+chain_status_t UnitChainBus::setChainBusOutputMode(uint8_t id, gpio_pin_t gpio, gpio_output_t gpioOutputMode,
+                                                   gpio_pull_t gpioPull, uint8_t *operationStatus,
+                                                   unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
     if (acquireMutex()) {
         cmdBufferSize              = 0;
         cmdBuffer[cmdBufferSize++] = gpio;
-        cmdBuffer[cmdBufferSize++] = gpioLevel;
         cmdBuffer[cmdBufferSize++] = gpioOutputMode;
         cmdBuffer[cmdBufferSize++] = gpioPull;
-        cmdBuffer[cmdBufferSize++] = gpioSpeed;
         sendPacket(id, CHAIN_GPIO_OUTPUT_INIT, cmdBuffer, cmdBufferSize);
         if (waitForData(id, CHAIN_GPIO_OUTPUT_INIT, timeout)) {
             if (checkPacket(returnPacket, returnPacketSize)) {
@@ -238,8 +236,62 @@ chain_status_t ChainUart::setUartOutputMode(uint8_t id, gpio_pin_t gpio, gpio_le
     return status;
 }
 
-chain_status_t ChainUart::setUartInputMode(uint8_t id, gpio_pin_t gpio, gpio_pull_t gpioPull, uint8_t *operationStatus,
-                                           unsigned long timeout)
+chain_status_t UnitChainBus::setChainBusOutputLevel(uint8_t id, gpio_pin_t gpio, gpio_level_t gpioLevel,
+                                                    uint8_t *operationStatus, unsigned long timeout)
+{
+    chain_status_t status = CHAIN_OK;
+
+    if (acquireMutex()) {
+        cmdBufferSize              = 0;
+        cmdBuffer[cmdBufferSize++] = gpio;
+        cmdBuffer[cmdBufferSize++] = gpioLevel;
+        sendPacket(id, CHAIN_GPIO_SET_OUTPUT_LEVEL, cmdBuffer, cmdBufferSize);
+        if (waitForData(id, CHAIN_GPIO_SET_OUTPUT_LEVEL, timeout)) {
+            if (checkPacket(returnPacket, returnPacketSize)) {
+                *operationStatus = returnPacket[6];
+            } else {
+                status = CHAIN_RETURN_PACKET_ERROR;
+            }
+        } else {
+            status = CHAIN_TIMEOUT;
+        }
+        releaseMutex();
+    } else {
+        status = CHAIN_BUSY;
+    }
+
+    return status;
+}
+chain_status_t UnitChainBus::getChainBusOutputLevel(uint8_t id, gpio_pin_t gpio, gpio_level_t *gpioLevel,
+                                                    uint8_t *operationStatus, unsigned long timeout)
+{
+    chain_status_t status = CHAIN_OK;
+
+    if (acquireMutex()) {
+        cmdBufferSize              = 0;
+        cmdBuffer[cmdBufferSize++] = gpio;
+        sendPacket(id, CHAIN_GPIO_READ_GPIO_LEVEL, cmdBuffer, cmdBufferSize);
+        if (waitForData(id, CHAIN_GPIO_READ_GPIO_LEVEL, timeout)) {
+            if (checkPacket(returnPacket, returnPacketSize)) {
+                *operationStatus = returnPacket[6];
+                if (*operationStatus == CHAIN_BUS_OPERATION_SUCCESS) {
+                    *gpioLevel = (gpio_level_t)returnPacket[7];
+                }
+            } else {
+                status = CHAIN_RETURN_PACKET_ERROR;
+            }
+        } else {
+            status = CHAIN_TIMEOUT;
+        }
+        releaseMutex();
+    } else {
+        status = CHAIN_BUSY;
+    }
+    return status;
+}
+
+chain_status_t UnitChainBus::setChainBusInputMode(uint8_t id, gpio_pin_t gpio, gpio_pull_t gpioPull,
+                                                  uint8_t *operationStatus, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -265,8 +317,8 @@ chain_status_t ChainUart::setUartInputMode(uint8_t id, gpio_pin_t gpio, gpio_pul
     return status;
 }
 
-chain_status_t ChainUart::getUartInputLevel(uint8_t id, gpio_pin_t gpio, uint8_t *gpioLevel, uint8_t *operationStatus,
-                                            unsigned long timeout)
+chain_status_t UnitChainBus::getChainBusInputLevel(uint8_t id, gpio_pin_t gpio, uint8_t *gpioLevel,
+                                                   uint8_t *operationStatus, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -277,7 +329,7 @@ chain_status_t ChainUart::getUartInputLevel(uint8_t id, gpio_pin_t gpio, uint8_t
         if (waitForData(id, CHAIN_GPIO_READ_GPIO_LEVEL, timeout)) {
             if (checkPacket(returnPacket, returnPacketSize)) {
                 *operationStatus = returnPacket[6];
-                if (*operationStatus == CHAIN_UART_OPERATION_SUCCESS) {
+                if (*operationStatus == CHAIN_BUS_OPERATION_SUCCESS) {
                     *gpioLevel = returnPacket[7];
                 }
             } else {
@@ -294,8 +346,9 @@ chain_status_t ChainUart::getUartInputLevel(uint8_t id, gpio_pin_t gpio, uint8_t
     return status;
 }
 
-chain_status_t ChainUart::setUartNvicMode(uint8_t id, gpio_pin_t gpio, gpio_pull_t gpioPull, nvic_trigger_t triggerMode,
-                                          uint8_t *operationStatus, unsigned long timeout)
+chain_status_t UnitChainBus::setChainBusNvicMode(uint8_t id, gpio_pin_t gpio, gpio_pull_t gpioPull,
+                                                 nvic_trigger_t triggerMode, uint8_t *operationStatus,
+                                                 unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
@@ -322,7 +375,7 @@ chain_status_t ChainUart::setUartNvicMode(uint8_t id, gpio_pin_t gpio, gpio_pull
     return status;
 }
 
-bool ChainUart::getUartNvicTriggerStatus(uint8_t id, uint16_t *status)
+bool UnitChainBus::getChainBusNvicTriggerStatus(uint8_t id, uint16_t *status)
 {
     processIncomingData();
     bool findStatus = 0;
@@ -335,15 +388,14 @@ bool ChainUart::getUartNvicTriggerStatus(uint8_t id, uint16_t *status)
     return false;
 }
 
-chain_status_t ChainUart::setUartAdcMode(uint8_t id, adc_mode_t channel1, adc_mode_t channel2, uint8_t *operationStatus,
-                                         unsigned long timeout)
+chain_status_t UnitChainBus::setChainBusAdcMode(uint8_t id, gpio_pin_t gpio, uint8_t *operationStatus,
+                                                unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
     if (acquireMutex()) {
         cmdBufferSize              = 0;
-        cmdBuffer[cmdBufferSize++] = channel1;
-        cmdBuffer[cmdBufferSize++] = channel2;
+        cmdBuffer[cmdBufferSize++] = gpio;
         sendPacket(id, CHAIN_GPIO_ADC_INIT, cmdBuffer, cmdBufferSize);
         if (waitForData(id, CHAIN_GPIO_ADC_INIT, timeout)) {
             if (checkPacket(returnPacket, returnPacketSize)) {
@@ -362,24 +414,20 @@ chain_status_t ChainUart::setUartAdcMode(uint8_t id, adc_mode_t channel1, adc_mo
     return status;
 }
 
-chain_status_t ChainUart::getUartAdcValue(uint8_t id, uint8_t *channelNums, uint8_t *buffer, uint8_t size,
-                                          uint8_t *operationStatus, unsigned long timeout)
+chain_status_t UnitChainBus::getChainBusAdcValue(uint8_t id, gpio_pin_t gpio, uint16_t *value, uint8_t *operationStatus,
+                                                 unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
     if (acquireMutex()) {
-        cmdBufferSize = 0;
+        cmdBufferSize              = 0;
+        cmdBuffer[cmdBufferSize++] = gpio;
         sendPacket(id, CHAIN_GPIO_ADC_READ, cmdBuffer, cmdBufferSize);
         if (waitForData(id, CHAIN_GPIO_ADC_READ, timeout)) {
             if (checkPacket(returnPacket, returnPacketSize)) {
                 *operationStatus = returnPacket[6];
-                *channelNums     = returnPacket[7];
-                if (*channelNums * 2 > size) {
-                    status = CHAIN_RETURN_PACKET_ERROR;
-                } else {
-                    for (uint8_t i = 0; i < *channelNums * 2; i++) {
-                        buffer[i] = returnPacket[8 + i];
-                    }
+                if (*operationStatus == CHAIN_BUS_OPERATION_SUCCESS) {
+                    *value = (returnPacket[8] << 8) | returnPacket[7];
                 }
             } else {
                 status = CHAIN_RETURN_PACKET_ERROR;
@@ -395,7 +443,8 @@ chain_status_t ChainUart::getUartAdcValue(uint8_t id, uint8_t *channelNums, uint
     return status;
 }
 
-chain_status_t ChainUart::getUartWorkMode(uint8_t id, work_status_t *gpio1, work_status_t *gpio2, unsigned long timeout)
+chain_status_t UnitChainBus::getChainBusWorkMode(uint8_t id, work_status_t *gpio1, work_status_t *gpio2,
+                                                 unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 

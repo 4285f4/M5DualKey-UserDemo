@@ -1,7 +1,7 @@
 #include "M5Chain.h"
 
-#define TXD_PIN GPIO_NUM_2  // Tx
-#define RXD_PIN GPIO_NUM_1  // Rx
+#define TXD_PIN GPIO_NUM_21  // Tx
+#define RXD_PIN GPIO_NUM_22  // Rx
 
 Chain M5Chain;
 
@@ -9,6 +9,8 @@ device_list_t *devices_list = NULL;
 uint16_t device_nums        = 0;
 uint8_t operation_status    = 0;
 chain_status_t chain_status = CHAIN_OK;
+uint16_t open_threshold     = 3967;
+uint16_t close_threshold    = 128;
 
 uint8_t rgb_test[5][3] = {
     {0xFF, 0x00, 0x00}, {0x00, 0xFF, 0x00}, {0x00, 0x00, 0xFF}, {0xFF, 0xFF, 0xFF}, {0x00, 0x00, 0x00},
@@ -92,39 +94,50 @@ void setup()
                     }
                     delay(500);
                 }
-                
-                chain_status = M5Chain.setSwitchThresholdValue(devices_list->devices[i].id, 3980, 96, &operation_status);
+
+                operation_status = 0;
+                chain_status =
+                    M5Chain.setSwitchThresholdValue(devices_list->devices[i].id, open_threshold, close_threshold,
+                                                    &operation_status, CHAIN_SAVE_FLASH_ENABLE);
                 if (chain_status == CHAIN_OK && operation_status) {
                     Serial.printf("ID[%d] set switch threshold success, chain_status:%d  operation_status:%d \r\n",
-                                devices_list->devices[i].id, chain_status, operation_status);
+                                  devices_list->devices[i].id, chain_status, operation_status);
                 } else {
                     Serial.printf("ID[%d] set switch threshold failed, chain_status:%d  operation_status:%d \r\n",
-                                    devices_list->devices[i].id, chain_status, operation_status);
+                                  devices_list->devices[i].id, chain_status, operation_status);
                 }
-                chain_status = M5Chain.setSwitchAutoTriggerMode(devices_list->devices[i].id, CHAIN_SLIP_REPORT_MODE, &operation_status);
-                if (chain_status == CHAIN_OK && operation_status) {
-                    Serial.printf("ID[%d] set switch auto trigger mode success, chain_status:%d  operation_status:%d \r\n",
-                                devices_list->devices[i].id, chain_status, operation_status);
+
+                uint16_t open_threshold, close_threshold = 0;
+                chain_status =
+                    M5Chain.getSwitchThresholdValue(devices_list->devices[i].id, &open_threshold, &close_threshold);
+                if (chain_status == CHAIN_OK) {
+                    Serial.printf("ID[%d] set switch threshold success, open_threshold:%d, close_threshold:%d\r\n",
+                                  devices_list->devices[i].id, open_threshold, close_threshold);
                 } else {
-                    Serial.printf("ID[%d] set switch auto trigger mode failed, chain_status:%d  operation_status:%d \r\n",
-                                    devices_list->devices[i].id, chain_status, operation_status);
+                    Serial.printf("ID[%d] set switch threshold failed, chain_status:%d\r\n",
+                                  devices_list->devices[i].id, chain_status);
                 }
 
-                chain_status = M5Chain.setSwitchDirection(devices_list->devices[i].id, CHAIN_SWITCH_DOWNUP_INC,
-                                                  &operation_status,
-                                                  CHAIN_SAVE_FLASH_DISABLE);  // Switch slip direction increasing, not save to flash
-                // M5Chain.setSwitchDirection(devices_list->devices[i].id, CHAIN_SWITCH_DOWNUP_INC,
-                //                                   &operation_status,
-                //                                   CHAIN_SAVE_FLASH_ENABLE);  // Switch slip direction increasing, save to flash
-                // M5Chain.setSwitchDirection(devices_list->devices[i].id, CHAIN_SWITCH_DOWNUP_DEC,
-                //                                   &operation_status,
-                //                                   CHAIN_SAVE_FLASH_DISABLE);  // Switch rotation direction decreasing, not save to flash
-                // M5Chain.setSwitchDirection(devices_list->devices[i].id, CHAIN_SWITCH_DOWNUP_DEC,
-                //                                   &operation_status,
-                //                                   CHAIN_SAVE_FLASH_ENABLE);  // Switch rotation direction decreasing, save to flash
+                chain_status = M5Chain.setSwitchAutoTriggerMode(devices_list->devices[i].id, CHAIN_SLIP_REPORT_OPEN,
+                                                                &operation_status);
+                if (chain_status == CHAIN_OK && operation_status) {
+                    Serial.printf(
+                        "ID[%d] set switch auto trigger mode success, chain_status:%d  operation_status:%d \r\n ",
+                        devices_list->devices[i].id, chain_status, operation_status);
+                } else {
+                    Serial.printf(
+                        "ID[%d] set switch auto trigger mode failed, chain_status:%d  operation_status:%d \r\n ",
+                        devices_list->devices[i].id, chain_status, operation_status);
+                }
+
+                chain_status = M5Chain.setSwitchDirection(
+                    devices_list->devices[i].id, CHAIN_SWITCH_DOWNUP_INC, &operation_status,
+                    CHAIN_SAVE_FLASH_DISABLE);  // Switch slip direction increasing, not save to flash
 
                 if (chain_status == CHAIN_OK && operation_status) {
-                    Serial.printf("Switch ID[%d] set switch slip direction success, chain_status:%d  operation_status:%d \r\n \r\n", 
+                    Serial.printf(
+                        "Switch ID[%d] set switch slip direction success, chain_status:%d operation_status : %d \r\n "
+                        "\r\n ",
                         devices_list->devices[i].id, chain_status, operation_status);
                 } else {
                     Serial.printf(
@@ -143,9 +156,9 @@ void loop()
     if (devices_list) {
         for (uint8_t i = 0; i < devices_list->count; i++) {
             if (devices_list->devices[i].device_type == CHAIN_SWITCH_TYPE_CODE) {
-                uint16_t switch12Bit = 0;
-                uint8_t switch8Bit   = 0;
-                uint16_t switch_threshold_open = 0;
+                uint16_t switch12Bit            = 0;
+                uint8_t switch8Bit              = 0;
+                uint16_t switch_threshold_open  = 0;
                 uint16_t switch_threshold_close = 0;
 
                 switch_direction_t switch_slip_direction;
@@ -156,28 +169,20 @@ void loop()
                 if (chain_status == CHAIN_OK) {
                     Serial.printf("Switch ID[%d] switch12Bit:%d \r\n", devices_list->devices[i].id, switch12Bit);
                 } else {
-                    Serial.printf("Switch ID[%d] get 12bit adc failed, chain_status:%d \r\n", devices_list->devices[i].id,
-                                  chain_status);
+                    Serial.printf("Switch ID[%d] get 12bit adc failed, chain_status:%d \r\n",
+                                  devices_list->devices[i].id, chain_status);
                 }
                 chain_status = M5Chain.getSwitch8BitAdc(devices_list->devices[i].id, &switch8Bit);
                 if (chain_status == CHAIN_OK) {
                     Serial.printf("Switch ID[%d] switch8Bit:%d \r\n", devices_list->devices[i].id, switch8Bit);
                 } else {
-                    Serial.printf("Switch ID[%d] get 8bit adc failed, chain_status:%d \r\n", devices_list->devices[i].id,
-                                  chain_status);
+                    Serial.printf("Switch ID[%d] get 8bit adc failed, chain_status:%d \r\n",
+                                  devices_list->devices[i].id, chain_status);
                 }
                 chain_status = M5Chain.getSwitchDirection(devices_list->devices[i].id, &switch_slip_direction);
                 if (chain_status == CHAIN_OK) {
                     Serial.printf("Switch ID[%d] switch_slip_direction:%d \r\n", devices_list->devices[i].id,
                                   switch_slip_direction);
-                } else {
-                    Serial.printf("Switch ID[%d] get slip direction failed, chain_status:%d \r\n",
-                                  devices_list->devices[i].id, chain_status);
-                }
-                chain_status = M5Chain.getSwitchThresholdValue(devices_list->devices[i].id, &switch_threshold_open, &switch_threshold_close);
-                if (chain_status == CHAIN_OK) {
-                    Serial.printf("Switch ID[%d] switch_slip threshold: open_threshold:%d , close_threshold:%d \r\n", devices_list->devices[i].id,
-                                  switch_threshold_open, switch_threshold_close);
                 } else {
                     Serial.printf("Switch ID[%d] get slip direction failed, chain_status:%d \r\n",
                                   devices_list->devices[i].id, chain_status);
@@ -191,7 +196,8 @@ void loop()
                 }
                 chain_status = M5Chain.getSwitchAutoTriggerMode(devices_list->devices[i].id, &switch_slip_report_mode);
                 if (chain_status == CHAIN_OK) {
-                    Serial.printf("Switch ID[%d] switch_slip report mode:%d \r\n", devices_list->devices[i].id, switch_slip_report_mode);
+                    Serial.printf("Switch ID[%d] switch_slip report mode:%d \r\n", devices_list->devices[i].id,
+                                  switch_slip_report_mode);
                 } else {
                     Serial.printf("Switch ID[%d] get slip direction failed, chain_status:%d \r\n",
                                   devices_list->devices[i].id, chain_status);
@@ -199,14 +205,15 @@ void loop()
 
                 while (M5Chain.getSwitchTrigger(devices_list->devices[i].id, &swwitch_trig_type)) {
                     switch (swwitch_trig_type) {
-                        case CHAIN_SWITCH_CLOSE:
-                            Serial.printf("ENCODER ID[%d] slip status is: close \r\n", devices_list->devices[i].id);
+                        case CHAIN_SWITCH_TRIGGER_REPORT_CLOSE:
+                            Serial.printf("Switch ID[%d] slip status is: close \r\n", devices_list->devices[i].id);
                             break;
-                        case CHAIN_SWITCH_OPEN:
-                            Serial.printf("ENCODER ID[%d] slip status is: open \r\n", devices_list->devices[i].id);
+                        case CHAIN_SWITCH_TRIGGER_REPORT_OPEN:
+                            Serial.printf("Switch ID[%d] slip status is: open \r\n", devices_list->devices[i].id);
                             break;
                         default:
-                            Serial.printf("ENCODER ID[%d] slip status is: unknown, %04x \r\n", devices_list->devices[i].id, swwitch_trig_type);
+                            Serial.printf("Switch ID[%d] slip status is: unknown, %04x \r\n",
+                                          devices_list->devices[i].id, swwitch_trig_type);
                             break;
                     }
                 }

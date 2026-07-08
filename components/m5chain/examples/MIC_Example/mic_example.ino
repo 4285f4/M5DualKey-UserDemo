@@ -41,7 +41,7 @@ void printDeviceList(device_list_t *devices)
 void setup()
 {
     Serial.begin(115200);
-    Serial.println("M5Chain Key Test");
+    Serial.println("M5Chain MIC Test");
     M5Chain.begin(&Serial2, 115200, RXD_PIN, TXD_PIN);
 
     if (M5Chain.isDeviceConnected()) {
@@ -111,8 +111,8 @@ void setup()
                 }
 
                 chain_status =
-                    M5Chain.setMICMode(devices_list->devices[i].id, CHAIN_MIC_REPORT_MODE, &operation_status);
-                // chain_status = M5Chain.setMICMode(devices_list->devices[i].id, CHAIN_MIC_NONE_REPORT_MODE,
+                    M5Chain.setMICReportMode(devices_list->devices[i].id, CHAIN_MIC_REPORT_MODE, &operation_status);
+                // chain_status = M5Chain.setMICReportMode(devices_list->devices[i].id, CHAIN_MIC_NONE_REPORT_MODE,
                 // &operation_status);
                 if (chain_status == CHAIN_OK && operation_status) {
                     Serial.printf("MIC ID[%d] set mic mode success\r\n", devices_list->devices[i].id);
@@ -121,11 +121,11 @@ void setup()
                                   devices_list->devices[i].id, chain_status, operation_status);
                 }
 
-                chain_status = M5Chain.setMICTriggerCycle(devices_list->devices[i].id, 300, &operation_status);
+                chain_status = M5Chain.setMICTriggerInterval(devices_list->devices[i].id, 300, &operation_status);
                 if (chain_status == CHAIN_OK && operation_status) {
-                    Serial.printf("MIC ID[%d] set mic trigger cycle success\r\n", devices_list->devices[i].id);
+                    Serial.printf("MIC ID[%d] set mic trigger interval success\r\n", devices_list->devices[i].id);
                 } else {
-                    Serial.printf("MIC ID[%d] set mic trigger cycle failed, chain_status:%d  operation_status:%d \r\n",
+                    Serial.printf("MIC ID[%d] set mic trigger interval failed, chain_status:%d  operation_status:%d \r\n",
                                   devices_list->devices[i].id, chain_status, operation_status);
                 }
             }
@@ -140,26 +140,31 @@ void loop()
     if (devices_list) {
         for (uint8_t i = 0; i < devices_list->count; i++) {
             if (devices_list->devices[i].device_type == CHAIN_MIC_TYPE_CODE) {
-                uint16_t mic_adc       = 0;
+                uint16_t mic_12bit_adc = 0;
+                uint8_t mic_8bit_adc   = 0;
                 uint16_t mic_threshold = 0;
-                chain_mic_mode_t mic_mode;
+                chain_mic_report_mode_t mic_report_mode;
                 uint16_t mic_trigger_cycle = 0;
                 chain_mic_trigger_t trigger_status;
-                chain_status = M5Chain.getMIC12BitAdc(devices_list->devices[i].id, &mic_adc);
+                chain_status = M5Chain.getMIC12BitAdc(devices_list->devices[i].id, &mic_12bit_adc);
                 if (chain_status == CHAIN_OK) {
-                    Serial.printf("MIC ID[%d] mic adc value: %d \r\n", devices_list->devices[i].id, mic_adc);
+                    Serial.printf("MIC ID[%d] mic 12bit adc value: %d \r\n", devices_list->devices[i].id, mic_12bit_adc);
+                }
+                chain_status = M5Chain.getMIC8BitAdc(devices_list->devices[i].id, &mic_8bit_adc);
+                if (chain_status == CHAIN_OK) {
+                    Serial.printf("MIC ID[%d] mic 8bit adc value: %d \r\n", devices_list->devices[i].id, mic_8bit_adc);
                 }
                 chain_status = M5Chain.getMICThresholdValue(devices_list->devices[i].id, &mic_threshold);
                 if (chain_status == CHAIN_OK) {
                     Serial.printf("MIC ID[%d] mic threshold value: %d \r\n", devices_list->devices[i].id, mic_threshold);
                 }
-                chain_status = M5Chain.getMICMode(devices_list->devices[i].id, &mic_mode);
+                chain_status = M5Chain.getMICReportMode(devices_list->devices[i].id, &mic_report_mode);
                 if (chain_status == CHAIN_OK) {
-                    Serial.printf("MIC ID[%d] mic mode: %d \r\n", devices_list->devices[i].id, mic_mode);
+                    Serial.printf("MIC ID[%d] mic report mode: %d \r\n", devices_list->devices[i].id, mic_report_mode);
                 }
-                chain_status = M5Chain.getMICTriggerCycle(devices_list->devices[i].id, &mic_trigger_cycle);
+                chain_status = M5Chain.GetMICTriggerInterval(devices_list->devices[i].id, &mic_trigger_cycle);
                 if (chain_status == CHAIN_OK) {
-                    Serial.printf("MIC ID[%d] mic trigger cycle: %d \r\n", devices_list->devices[i].id, mic_trigger_cycle);
+                    Serial.printf("MIC ID[%d] mic trigger interval: %d \r\n", devices_list->devices[i].id, mic_trigger_cycle);
                 }
                 while (M5Chain.getMICTriggerStatus(devices_list->devices[i].id, &trigger_status)) {
                     switch (trigger_status) {

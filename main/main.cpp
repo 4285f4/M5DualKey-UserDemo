@@ -33,6 +33,7 @@ extern "C" {
 #include "esp_mac.h"
 #include "cJSON.h"
 #include "esp_crc.h"
+#include "web_assets.h"
 
 // Web文件嵌入
 extern "C" {
@@ -44,22 +45,6 @@ extern const char script_js_start[] asm("_binary_script_js_start");
 extern const char script_js_end[] asm("_binary_script_js_end");
 extern const char favicon_ico_start[] asm("_binary_favicon_ico_start");
 extern const char favicon_ico_end[] asm("_binary_favicon_ico_end");
-extern const char chain_angle_jpg_start[] asm("_binary_Chain_Angle_jpg_start");
-extern const char chain_angle_jpg_end[] asm("_binary_Chain_Angle_jpg_end");
-extern const char chain_blank_jpg_start[] asm("_binary_Chain_Blank_jpg_start");
-extern const char chain_blank_jpg_end[] asm("_binary_Chain_Blank_jpg_end");
-extern const char chain_dualKey_png_start[] asm("_binary_Chain_DualKey_png_start");
-extern const char chain_dualKey_png_end[] asm("_binary_Chain_DualKey_png_end");
-extern const char chain_encoder_jpg_start[] asm("_binary_Chain_Encoder_jpg_start");
-extern const char chain_encoder_jpg_end[] asm("_binary_Chain_Encoder_jpg_end");
-extern const char chain_joystick_jpg_start[] asm("_binary_Chain_Joystick_jpg_start");
-extern const char chain_joystick_jpg_end[] asm("_binary_Chain_Joystick_jpg_end");
-extern const char chain_key_jpg_start[] asm("_binary_Chain_Key_jpg_start");
-extern const char chain_key_jpg_end[] asm("_binary_Chain_Key_jpg_end");
-extern const char chain_mount_jpg_start[] asm("_binary_Chain_Mount_jpg_start");
-extern const char chain_mount_jpg_end[] asm("_binary_Chain_Mount_jpg_end");
-extern const char chain_tof_jpg_start[] asm("_binary_Chain_ToF_jpg_start");
-extern const char chain_tof_jpg_end[] asm("_binary_Chain_ToF_jpg_end");
 }
 
 static const char *TAG = "main";
@@ -409,136 +394,6 @@ static esp_err_t favicon_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-// HTTP GET处理器 - Chain Angle图片
-static esp_err_t chain_angle_get_handler(httpd_req_t *req)
-{
-    const uint32_t chain_angle_len = chain_angle_jpg_end - chain_angle_jpg_start;
-    ESP_LOGI(TAG, "Serve chain_angle.jpg");
-    httpd_resp_set_type(req, "image/jpeg");
-    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
-#if enable_web_cache
-    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600, immutable");
-#else
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-#endif
-    httpd_resp_send(req, chain_angle_jpg_start, chain_angle_len);
-    return ESP_OK;
-}
-
-// HTTP GET处理器 - Chain Blank图片
-static esp_err_t chain_blank_get_handler(httpd_req_t *req)
-{
-    const uint32_t chain_blank_len = chain_blank_jpg_end - chain_blank_jpg_start;
-    ESP_LOGI(TAG, "Serve chain_blank.jpg");
-    httpd_resp_set_type(req, "image/jpeg");
-    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
-#if enable_web_cache
-    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600, immutable");
-#else
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-#endif
-    httpd_resp_send(req, chain_blank_jpg_start, chain_blank_len);
-    return ESP_OK;
-}
-
-// HTTP GET处理器 - Chain DualKey图片
-static esp_err_t chain_dualKey_get_handler(httpd_req_t *req)
-{
-    const uint32_t chain_dualKey_len = chain_dualKey_png_end - chain_dualKey_png_start;
-    ESP_LOGI(TAG, "Serve Chain_DualKey.png");
-    httpd_resp_set_type(req, "image/png");
-    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
-#if enable_web_cache
-    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600, immutable");
-#else
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-#endif
-    httpd_resp_send(req, chain_dualKey_png_start, chain_dualKey_len);
-    return ESP_OK;
-}
-
-// HTTP GET处理器 - Chain Encoder图片
-static esp_err_t chain_encoder_get_handler(httpd_req_t *req)
-{
-    const uint32_t chain_encoder_len = chain_encoder_jpg_end - chain_encoder_jpg_start;
-    ESP_LOGI(TAG, "Serve Chain_Encoder.jpg");
-    httpd_resp_set_type(req, "image/jpeg");
-    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
-#if enable_web_cache
-    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600, immutable");
-#else
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-#endif
-    httpd_resp_send(req, chain_encoder_jpg_start, chain_encoder_len);
-    return ESP_OK;
-}
-
-// HTTP GET处理器 - Chain Joystick图片
-static esp_err_t chain_joystick_get_handler(httpd_req_t *req)
-{
-    const uint32_t chain_joystick_len = chain_joystick_jpg_end - chain_joystick_jpg_start;
-    ESP_LOGI(TAG, "Serve Chain_Joystick.jpg");
-    httpd_resp_set_type(req, "image/jpeg");
-    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
-#if enable_web_cache
-    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600, immutable");
-#else
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-#endif
-    httpd_resp_send(req, chain_joystick_jpg_start, chain_joystick_len);
-    return ESP_OK;
-}
-
-// HTTP GET处理器 - Chain Key图片
-static esp_err_t chain_key_get_handler(httpd_req_t *req)
-{
-    const uint32_t chain_key_len = chain_key_jpg_end - chain_key_jpg_start;
-    ESP_LOGI(TAG, "Serve Chain_Key.jpg");
-    httpd_resp_set_type(req, "image/jpeg");
-    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
-#if enable_web_cache
-    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600, immutable");
-#else
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-#endif
-    httpd_resp_send(req, chain_key_jpg_start, chain_key_len);
-    return ESP_OK;
-}
-
-// HTTP GET处理器 - Chain Mount图片
-static esp_err_t chain_mount_get_handler(httpd_req_t *req)
-{
-    const uint32_t chain_mount_len = chain_mount_jpg_end - chain_mount_jpg_start;
-    ESP_LOGI(TAG, "Serve Chain_Mount.jpg");
-    httpd_resp_set_type(req, "image/jpeg");
-    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
-#if enable_web_cache
-    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600, immutable");
-#else
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-#endif
-    httpd_resp_send(req, chain_mount_jpg_start, chain_mount_len);
-    return ESP_OK;
-}
-
-// HTTP GET处理器 - Chain ToF图片
-static esp_err_t chain_tof_get_handler(httpd_req_t *req)
-{
-    const uint32_t chain_tof_len = chain_tof_jpg_end - chain_tof_jpg_start;
-    ESP_LOGI(TAG, "Serve Chain_ToF.jpg");
-    httpd_resp_set_type(req, "image/jpeg");
-    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
-#if enable_web_cache
-    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=3600, immutable");
-#else
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-#endif
-    httpd_resp_send(req, chain_tof_jpg_start, chain_tof_len);
-    return ESP_OK;
-}
-
-// HTTP GET处理器 - Chain
-
 // WebSocket处理器
 static esp_err_t websocket_handler(httpd_req_t *req)
 {
@@ -604,9 +459,13 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                         }
                     }
                 } else if (strcmp(type->valuestring, "get_status") == 0) {
-                    // 发送状态数据
-                    websocket_fd = httpd_req_to_sockfd(req);
-                    websocket_send_status();
+                    // 避免在 httpd 栈上构建 JSON
+                    websocket_fd      = httpd_req_to_sockfd(req);
+                    send_bus_all_data = true;
+                    if (status_refresh_queue != NULL) {
+                        status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+                        xQueueSend(status_refresh_queue, &refresh_msg, 0);
+                    }
                 } else if (strcmp(type->valuestring, "enumerate_bus") == 0) {
                     // 枚举Chain Bus设备
                     cJSON *bus = cJSON_GetObjectItem(json, "bus");
@@ -794,6 +653,73 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                                     chain_bus_set_device_hid_config(bus_idx, dev_id, &hid_config);
                                     break;
                                 }
+                                case CHAIN_PEDAL_TYPE_CODE: {
+                                    cJSON *single_click  = cJSON_GetObjectItem(config, "single_click");
+                                    cJSON *press_down    = cJSON_GetObjectItem(config, "press_down");
+                                    cJSON *press_release = cJSON_GetObjectItem(config, "press_release");
+                                    if (single_click && cJSON_IsNumber(single_click))
+                                        hid_config.pedal_config.single_click = (hid_func_type_t)single_click->valueint;
+                                    if (press_down && cJSON_IsNumber(press_down))
+                                        hid_config.pedal_config.press_down = (hid_func_type_t)press_down->valueint;
+                                    if (press_release && cJSON_IsNumber(press_release))
+                                        hid_config.pedal_config.press_release =
+                                            (hid_func_type_t)press_release->valueint;
+                                    chain_bus_set_device_hid_config(bus_idx, dev_id, &hid_config);
+                                    break;
+                                }
+                                case CHAIN_MIC_TYPE_CODE: {
+                                    cJSON *high_func = cJSON_GetObjectItem(config, "high_threshold_func");
+                                    cJSON *low_func  = cJSON_GetObjectItem(config, "low_threshold_func");
+                                    cJSON *threshold = cJSON_GetObjectItem(config, "threshold");
+                                    cJSON *interval  = cJSON_GetObjectItem(config, "trigger_interval_ms");
+                                    if (high_func && cJSON_IsNumber(high_func))
+                                        hid_config.mic_config.high_threshold_func =
+                                            (hid_func_type_t)high_func->valueint;
+                                    if (low_func && cJSON_IsNumber(low_func))
+                                        hid_config.mic_config.low_threshold_func = (hid_func_type_t)low_func->valueint;
+                                    if (threshold && cJSON_IsNumber(threshold))
+                                        hid_config.mic_config.threshold = (uint16_t)threshold->valueint;
+                                    if (interval && cJSON_IsNumber(interval))
+                                        hid_config.mic_config.trigger_interval_ms = (uint16_t)interval->valueint;
+                                    chain_bus_set_device_hid_config(bus_idx, dev_id, &hid_config);
+                                    break;
+                                }
+                                case CHAIN_SWITCH_TYPE_CODE: {
+                                    cJSON *open_func  = cJSON_GetObjectItem(config, "open_func");
+                                    cJSON *close_func = cJSON_GetObjectItem(config, "close_func");
+                                    if (open_func && cJSON_IsNumber(open_func))
+                                        hid_config.switch_config.open_func = (hid_func_type_t)open_func->valueint;
+                                    if (close_func && cJSON_IsNumber(close_func))
+                                        hid_config.switch_config.close_func = (hid_func_type_t)close_func->valueint;
+                                    chain_bus_set_device_hid_config(bus_idx, dev_id, &hid_config);
+                                    break;
+                                }
+                                case CHAIN_DLight_TYPE_CODE: {
+                                    cJSON *high_func = cJSON_GetObjectItem(config, "lux_high_func");
+                                    cJSON *low_func  = cJSON_GetObjectItem(config, "lux_low_func");
+                                    cJSON *high_thr  = cJSON_GetObjectItem(config, "high_threshold");
+                                    cJSON *low_thr   = cJSON_GetObjectItem(config, "low_threshold");
+                                    if (high_func && cJSON_IsNumber(high_func))
+                                        hid_config.dlight_config.lux_high_func = (hid_func_type_t)high_func->valueint;
+                                    if (low_func && cJSON_IsNumber(low_func))
+                                        hid_config.dlight_config.lux_low_func = (hid_func_type_t)low_func->valueint;
+                                    if (high_thr && cJSON_IsNumber(high_thr))
+                                        hid_config.dlight_config.high_threshold = (uint32_t)high_thr->valueint;
+                                    if (low_thr && cJSON_IsNumber(low_thr))
+                                        hid_config.dlight_config.low_threshold = (uint32_t)low_thr->valueint;
+                                    chain_bus_set_device_hid_config(bus_idx, dev_id, &hid_config);
+                                    break;
+                                }
+                                case CHAIN_PIR_TYPE_CODE: {
+                                    cJSON *come_func  = cJSON_GetObjectItem(config, "person_come_func");
+                                    cJSON *leave_func = cJSON_GetObjectItem(config, "person_leave_func");
+                                    if (come_func && cJSON_IsNumber(come_func))
+                                        hid_config.pir_config.person_come_func = (hid_func_type_t)come_func->valueint;
+                                    if (leave_func && cJSON_IsNumber(leave_func))
+                                        hid_config.pir_config.person_leave_func = (hid_func_type_t)leave_func->valueint;
+                                    chain_bus_set_device_hid_config(bus_idx, dev_id, &hid_config);
+                                    break;
+                                }
                                 default:
                                     ESP_LOGW(TAG, "设备类型 %s 不支持HID配置",
                                              chain_device_type_name(dev_status->type));
@@ -864,6 +790,214 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                             ESP_LOGE(TAG, "找不到设备 %s Bus ID: %d", bus->valuestring, dev_id);
                         }
                     }
+                } else if (strcmp(type->valuestring, "buzzer_play") == 0) {
+                    cJSON *bus       = cJSON_GetObjectItem(json, "bus");
+                    cJSON *device_id = cJSON_GetObjectItem(json, "device_id");
+                    cJSON *note      = cJSON_GetObjectItem(json, "note");
+                    cJSON *freq      = cJSON_GetObjectItem(json, "freq");
+                    cJSON *duty      = cJSON_GetObjectItem(json, "duty");
+                    cJSON *duration  = cJSON_GetObjectItem(json, "duration");
+                    if (bus && device_id && cJSON_IsString(bus) && cJSON_IsNumber(device_id)) {
+                        int bus_idx    = (strcmp(bus->valuestring, "left") == 0) ? 0 : 1;
+                        uint8_t dev_id = (uint8_t)device_id->valueint;
+                        uint16_t dur   = (duration && cJSON_IsNumber(duration)) ? (uint16_t)duration->valueint : 500;
+                        esp_err_t ret  = ESP_FAIL;
+                        if (note && cJSON_IsNumber(note)) {
+                            ret = chain_bus_buzzer_note_play(bus_idx, dev_id, (uint8_t)note->valueint, dur);
+                        } else if (freq && cJSON_IsNumber(freq)) {
+                            uint8_t d = (duty && cJSON_IsNumber(duty)) ? (uint8_t)duty->valueint : 50;
+                            ret       = chain_bus_buzzer_auto_play(bus_idx, dev_id, (uint16_t)freq->valueint, d, dur);
+                        }
+                        if (ret != ESP_OK) {
+                            ESP_LOGE(TAG, "buzzer_play failed");
+                        }
+                    }
+                } else if (strcmp(type->valuestring, "buzzer_seq_play") == 0) {
+                    cJSON *bus       = cJSON_GetObjectItem(json, "bus");
+                    cJSON *device_id = cJSON_GetObjectItem(json, "device_id");
+                    cJSON *steps     = cJSON_GetObjectItem(json, "steps");
+                    cJSON *gap       = cJSON_GetObjectItem(json, "gap_ms");
+                    cJSON *loop      = cJSON_GetObjectItem(json, "loop");
+                    cJSON *preset    = cJSON_GetObjectItem(json, "preset");
+                    if (bus && device_id && cJSON_IsString(bus) && cJSON_IsNumber(device_id)) {
+                        int bus_idx           = (strcmp(bus->valuestring, "left") == 0) ? 0 : 1;
+                        uint8_t dev_id        = (uint8_t)device_id->valueint;
+                        buzzer_sequence_t seq = {};
+                        if (preset && cJSON_IsNumber(preset)) {
+                            const buzzer_sequence_t *p = chain_bus_buzzer_seq_get_preset((uint8_t)preset->valueint);
+                            if (p) {
+                                memcpy(&seq, p, sizeof(seq));
+                                if (loop) {
+                                    seq.loop = cJSON_IsTrue(loop);
+                                }
+                            }
+                        } else if (steps && cJSON_IsArray(steps)) {
+                            int count = cJSON_GetArraySize(steps);
+                            if (count > BUZZER_SEQ_MAX_STEPS) {
+                                count = BUZZER_SEQ_MAX_STEPS;
+                            }
+                            for (int i = 0; i < count; i++) {
+                                cJSON *step = cJSON_GetArrayItem(steps, i);
+                                cJSON *note = cJSON_GetObjectItem(step, "note");
+                                cJSON *dur  = cJSON_GetObjectItem(step, "duration_ms");
+                                if (note && cJSON_IsNumber(note)) {
+                                    seq.steps[i].note = (uint8_t)note->valueint;
+                                }
+                                if (dur && cJSON_IsNumber(dur)) {
+                                    seq.steps[i].duration_ms = (uint16_t)dur->valueint;
+                                }
+                            }
+                            seq.step_count = (uint8_t)count;
+                            seq.gap_ms     = (gap && cJSON_IsNumber(gap)) ? (uint16_t)gap->valueint : 30;
+                            seq.loop       = !loop || cJSON_IsTrue(loop);
+                        }
+                        chain_bus_buzzer_seq_play(bus_idx, dev_id, &seq);
+                    }
+                } else if (strcmp(type->valuestring, "buzzer_seq_stop") == 0) {
+                    chain_bus_buzzer_seq_stop();
+                } else if (strcmp(type->valuestring, "buzzer_stop") == 0) {
+                    cJSON *bus       = cJSON_GetObjectItem(json, "bus");
+                    cJSON *device_id = cJSON_GetObjectItem(json, "device_id");
+                    if (bus && device_id && cJSON_IsString(bus) && cJSON_IsNumber(device_id)) {
+                        int bus_idx = (strcmp(bus->valuestring, "left") == 0) ? 0 : 1;
+                        chain_bus_buzzer_stop(bus_idx, (uint8_t)device_id->valueint);
+                    }
+                } else if (strcmp(type->valuestring, "set_mic_config") == 0) {
+                    cJSON *bus       = cJSON_GetObjectItem(json, "bus");
+                    cJSON *device_id = cJSON_GetObjectItem(json, "device_id");
+                    cJSON *threshold = cJSON_GetObjectItem(json, "threshold");
+                    cJSON *interval  = cJSON_GetObjectItem(json, "trigger_interval_ms");
+                    if (bus && device_id && cJSON_IsString(bus) && cJSON_IsNumber(device_id)) {
+                        int bus_idx  = (strcmp(bus->valuestring, "left") == 0) ? 0 : 1;
+                        uint16_t thr = (threshold && cJSON_IsNumber(threshold)) ? (uint16_t)threshold->valueint : 2000;
+                        uint16_t iv  = (interval && cJSON_IsNumber(interval)) ? (uint16_t)interval->valueint : 500;
+                        chain_bus_set_mic_params(bus_idx, (uint8_t)device_id->valueint, thr, iv);
+                        chain_bus_save_device_config(bus_idx, (uint8_t)device_id->valueint);
+                    }
+                } else if (strcmp(type->valuestring, "set_dlight_config") == 0) {
+                    cJSON *bus       = cJSON_GetObjectItem(json, "bus");
+                    cJSON *device_id = cJSON_GetObjectItem(json, "device_id");
+                    cJSON *high_thr  = cJSON_GetObjectItem(json, "high_threshold");
+                    cJSON *low_thr   = cJSON_GetObjectItem(json, "low_threshold");
+                    if (bus && device_id && cJSON_IsString(bus) && cJSON_IsNumber(device_id)) {
+                        int bus_idx   = (strcmp(bus->valuestring, "left") == 0) ? 0 : 1;
+                        uint32_t high = (high_thr && cJSON_IsNumber(high_thr)) ? (uint32_t)high_thr->valueint : 500;
+                        uint32_t low  = (low_thr && cJSON_IsNumber(low_thr)) ? (uint32_t)low_thr->valueint : 100;
+                        chain_bus_set_dlight_params(bus_idx, (uint8_t)device_id->valueint, high, low);
+                        chain_bus_save_device_config(bus_idx, (uint8_t)device_id->valueint);
+                    }
+                } else if (strcmp(type->valuestring, "mono_scroll_all") == 0) {
+                    cJSON *bus      = cJSON_GetObjectItem(json, "bus");
+                    cJSON *text     = cJSON_GetObjectItem(json, "text");
+                    cJSON *dir      = cJSON_GetObjectItem(json, "dir");
+                    cJSON *mode     = cJSON_GetObjectItem(json, "mode");
+                    cJSON *interval = cJSON_GetObjectItem(json, "interval");
+                    if (bus && text && cJSON_IsString(bus) && cJSON_IsString(text)) {
+                        int bus_idx = (strcmp(bus->valuestring, "left") == 0) ? 0 : 1;
+                        uint8_t d   = (dir && cJSON_IsNumber(dir)) ? (uint8_t)dir->valueint : 0;
+                        uint8_t m   = (mode && cJSON_IsNumber(mode)) ? (uint8_t)mode->valueint : 1;
+                        uint16_t iv = (interval && cJSON_IsNumber(interval)) ? (uint16_t)interval->valueint : 200;
+                        chain_bus_mono_scroll_all(bus_idx, text->valuestring, d, m, iv);
+                    }
+                } else if (strcmp(type->valuestring, "mono_draw") == 0 ||
+                           strcmp(type->valuestring, "mono_clear") == 0 ||
+                           strcmp(type->valuestring, "mono_scroll") == 0) {
+                    cJSON *bus       = cJSON_GetObjectItem(json, "bus");
+                    cJSON *device_id = cJSON_GetObjectItem(json, "device_id");
+                    if (bus && device_id && cJSON_IsString(bus) && cJSON_IsNumber(device_id)) {
+                        int bus_idx    = (strcmp(bus->valuestring, "left") == 0) ? 0 : 1;
+                        uint8_t dev_id = (uint8_t)device_id->valueint;
+                        if (strcmp(type->valuestring, "mono_clear") == 0) {
+                            chain_bus_mono_clear(bus_idx, dev_id);
+                        } else if (strcmp(type->valuestring, "mono_draw") == 0) {
+                            cJSON *x     = cJSON_GetObjectItem(json, "x");
+                            cJSON *y     = cJSON_GetObjectItem(json, "y");
+                            cJSON *state = cJSON_GetObjectItem(json, "state");
+                            if (x && y && state && cJSON_IsNumber(x) && cJSON_IsNumber(y) && cJSON_IsBool(state)) {
+                                chain_bus_mono_set_pixel(bus_idx, dev_id, (uint8_t)x->valueint, (uint8_t)y->valueint,
+                                                         cJSON_IsTrue(state));
+                            }
+                        } else {
+                            cJSON *text     = cJSON_GetObjectItem(json, "text");
+                            cJSON *dir      = cJSON_GetObjectItem(json, "dir");
+                            cJSON *mode     = cJSON_GetObjectItem(json, "mode");
+                            cJSON *interval = cJSON_GetObjectItem(json, "interval");
+                            if (text && cJSON_IsString(text)) {
+                                uint8_t d = (dir && cJSON_IsNumber(dir)) ? (uint8_t)dir->valueint : 0;
+                                uint8_t m = (mode && cJSON_IsNumber(mode)) ? (uint8_t)mode->valueint : 1;
+                                uint16_t iv =
+                                    (interval && cJSON_IsNumber(interval)) ? (uint16_t)interval->valueint : 200;
+                                chain_bus_mono_scroll(bus_idx, dev_id, text->valuestring, d, m, iv);
+                            }
+                        }
+                    }
+                } else if (strcmp(type->valuestring, "rgb_scroll_all") == 0) {
+                    cJSON *bus      = cJSON_GetObjectItem(json, "bus");
+                    cJSON *text     = cJSON_GetObjectItem(json, "text");
+                    cJSON *dir      = cJSON_GetObjectItem(json, "dir");
+                    cJSON *mode     = cJSON_GetObjectItem(json, "mode");
+                    cJSON *interval = cJSON_GetObjectItem(json, "interval");
+                    cJSON *color    = cJSON_GetObjectItem(json, "color");
+                    if (bus && text && cJSON_IsString(bus) && cJSON_IsString(text)) {
+                        int bus_idx = (strcmp(bus->valuestring, "left") == 0) ? 0 : 1;
+                        uint8_t d   = (dir && cJSON_IsNumber(dir)) ? (uint8_t)dir->valueint : 0;
+                        uint8_t m   = (mode && cJSON_IsNumber(mode)) ? (uint8_t)mode->valueint : 1;
+                        uint16_t iv = (interval && cJSON_IsNumber(interval)) ? (uint16_t)interval->valueint : 200;
+                        uint16_t c  = (color && cJSON_IsNumber(color)) ? (uint16_t)color->valueint : 0xF800;
+                        chain_bus_rgb_scroll_all(bus_idx, text->valuestring, d, m, iv, c);
+                    }
+                } else if (strcmp(type->valuestring, "rgb_draw") == 0 || strcmp(type->valuestring, "rgb_clear") == 0 ||
+                           strcmp(type->valuestring, "rgb_scroll") == 0) {
+                    cJSON *bus       = cJSON_GetObjectItem(json, "bus");
+                    cJSON *device_id = cJSON_GetObjectItem(json, "device_id");
+                    if (bus && device_id && cJSON_IsString(bus) && cJSON_IsNumber(device_id)) {
+                        int bus_idx    = (strcmp(bus->valuestring, "left") == 0) ? 0 : 1;
+                        uint8_t dev_id = (uint8_t)device_id->valueint;
+                        if (strcmp(type->valuestring, "rgb_clear") == 0) {
+                            chain_bus_rgb_clear(bus_idx, dev_id);
+                        } else if (strcmp(type->valuestring, "rgb_draw") == 0) {
+                            cJSON *x     = cJSON_GetObjectItem(json, "x");
+                            cJSON *y     = cJSON_GetObjectItem(json, "y");
+                            cJSON *color = cJSON_GetObjectItem(json, "color");
+                            if (x && y && color && cJSON_IsNumber(x) && cJSON_IsNumber(y) && cJSON_IsNumber(color)) {
+                                chain_bus_rgb_set_pixel(bus_idx, dev_id, (uint8_t)x->valueint, (uint8_t)y->valueint,
+                                                        (uint16_t)color->valueint);
+                            }
+                        } else {
+                            cJSON *text     = cJSON_GetObjectItem(json, "text");
+                            cJSON *dir      = cJSON_GetObjectItem(json, "dir");
+                            cJSON *mode     = cJSON_GetObjectItem(json, "mode");
+                            cJSON *interval = cJSON_GetObjectItem(json, "interval");
+                            cJSON *color    = cJSON_GetObjectItem(json, "color");
+                            if (text && cJSON_IsString(text)) {
+                                uint8_t d = (dir && cJSON_IsNumber(dir)) ? (uint8_t)dir->valueint : 0;
+                                uint8_t m = (mode && cJSON_IsNumber(mode)) ? (uint8_t)mode->valueint : 1;
+                                uint16_t iv =
+                                    (interval && cJSON_IsNumber(interval)) ? (uint16_t)interval->valueint : 200;
+                                uint16_t c = (color && cJSON_IsNumber(color)) ? (uint16_t)color->valueint : 0xF800;
+                                chain_bus_rgb_scroll(bus_idx, dev_id, text->valuestring, d, m, iv, c);
+                            }
+                        }
+                    }
+                } else if (strcmp(type->valuestring, "servo_set_angle") == 0) {
+                    cJSON *bus       = cJSON_GetObjectItem(json, "bus");
+                    cJSON *device_id = cJSON_GetObjectItem(json, "device_id");
+                    cJSON *gpio      = cJSON_GetObjectItem(json, "gpio");
+                    cJSON *angle     = cJSON_GetObjectItem(json, "angle");
+                    if (bus && device_id && gpio && angle && cJSON_IsString(bus) && cJSON_IsNumber(device_id) &&
+                        cJSON_IsNumber(gpio) && cJSON_IsNumber(angle)) {
+                        int bus_idx = (strcmp(bus->valuestring, "left") == 0) ? 0 : 1;
+                        chain_bus_servo_set_angle(bus_idx, (uint8_t)device_id->valueint, (uint8_t)gpio->valueint,
+                                                  (uint8_t)angle->valueint);
+                    }
+                } else if (strcmp(type->valuestring, "unitbus_i2c_scan") == 0) {
+                    cJSON *bus       = cJSON_GetObjectItem(json, "bus");
+                    cJSON *device_id = cJSON_GetObjectItem(json, "device_id");
+                    if (bus && device_id && cJSON_IsString(bus) && cJSON_IsNumber(device_id)) {
+                        int bus_idx = (strcmp(bus->valuestring, "left") == 0) ? 0 : 1;
+                        chain_bus_unitbus_i2c_scan(bus_idx, (uint8_t)device_id->valueint);
+                        send_bus_all_data = true;
+                    }
                 } else if (strcmp(type->valuestring, "bluetooth_start_adv") == 0) {
                     // 开始蓝牙广播
                     ESP_LOGI(TAG, "启动蓝牙广播");
@@ -907,8 +1041,11 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                     esp_err_t ret = dualkey_config_load();
                     if (ret == ESP_OK) {
                         ESP_LOGI(TAG, "DualKey配置加载成功");
-                        // 立即发送状态更新
-                        websocket_send_status();
+                        send_bus_all_data = true;
+                        if (status_refresh_queue != NULL) {
+                            status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+                            xQueueSend(status_refresh_queue, &refresh_msg, 0);
+                        }
                     } else if (ret == ESP_ERR_NOT_FOUND) {
                         ESP_LOGI(TAG, "DualKey配置未找到，使用默认配置");
                     } else {
@@ -1183,6 +1320,61 @@ static void websocket_send_status(void)
                         cJSON_AddNumberToObject(device_data, "switch_count",
                                                 dev_status->device_data.switch_data.switch_count);
                         break;
+                    case CHAIN_PEDAL_TYPE_CODE:
+                        cJSON_AddNumberToObject(device_data, "button_status",
+                                                dev_status->device_data.pedal_data.button_status);
+                        cJSON_AddNumberToObject(device_data, "switch_status",
+                                                dev_status->device_data.pedal_data.switch_status);
+                        break;
+                    case CHAIN_MIC_TYPE_CODE:
+                        cJSON_AddNumberToObject(device_data, "adc_value", dev_status->device_data.mic_data.adc_value);
+                        cJSON_AddNumberToObject(device_data, "threshold", dev_status->device_data.mic_data.threshold);
+                        break;
+                    case CHAIN_ENV_TYPE_CODE:
+                        cJSON_AddNumberToObject(device_data, "temperature",
+                                                dev_status->device_data.env_data.temperature);
+                        cJSON_AddNumberToObject(device_data, "humidity", dev_status->device_data.env_data.humidity);
+                        cJSON_AddNumberToObject(device_data, "pressure", dev_status->device_data.env_data.pressure);
+                        cJSON_AddNumberToObject(device_data, "altitude", dev_status->device_data.env_data.altitude);
+                        cJSON_AddBoolToObject(device_data, "spa_ok", dev_status->device_data.env_data.spa_ok);
+                        break;
+                    case CHAIN_IMU_TYPE_CODE:
+                        cJSON_AddNumberToObject(device_data, "ax", dev_status->device_data.imu_data.ax);
+                        cJSON_AddNumberToObject(device_data, "ay", dev_status->device_data.imu_data.ay);
+                        cJSON_AddNumberToObject(device_data, "az", dev_status->device_data.imu_data.az);
+                        cJSON_AddNumberToObject(device_data, "gx", dev_status->device_data.imu_data.gx);
+                        cJSON_AddNumberToObject(device_data, "gy", dev_status->device_data.imu_data.gy);
+                        cJSON_AddNumberToObject(device_data, "gz", dev_status->device_data.imu_data.gz);
+                        cJSON_AddNumberToObject(device_data, "temperature",
+                                                dev_status->device_data.imu_data.temperature);
+                        break;
+                    case CHAIN_DLight_TYPE_CODE:
+                        cJSON_AddNumberToObject(device_data, "lux", dev_status->device_data.dlight_data.lux);
+                        break;
+                    case UNIT_8SERVOS2_CHAIN_TYPE_CODE: {
+                        cJSON *angles = cJSON_CreateArray();
+                        for (int j = 0; j < 8; j++) {
+                            cJSON_AddItemToArray(angles,
+                                                 cJSON_CreateNumber(dev_status->device_data.servos_data.angles[j]));
+                        }
+                        cJSON_AddItemToObject(device_data, "angles", angles);
+                        cJSON_AddNumberToObject(device_data, "dc_voltage",
+                                                dev_status->device_data.servos_data.dc_voltage);
+                        cJSON_AddNumberToObject(device_data, "grove_voltage",
+                                                dev_status->device_data.servos_data.grove_voltage);
+                        break;
+                    }
+                    case UNIT_CHAIN_BUS_TYPE_CODE: {
+                        cJSON *addrs = cJSON_CreateArray();
+                        for (int j = 0; j < dev_status->device_data.chain_bus_data.i2c_addr_count; j++) {
+                            cJSON_AddItemToArray(
+                                addrs, cJSON_CreateNumber(dev_status->device_data.chain_bus_data.i2c_addrs[j]));
+                        }
+                        cJSON_AddItemToObject(device_data, "i2c_addrs", addrs);
+                        cJSON_AddNumberToObject(device_data, "i2c_addr_count",
+                                                dev_status->device_data.chain_bus_data.i2c_addr_count);
+                        break;
+                    }
                     default:
                         break;
                 }
@@ -1239,6 +1431,54 @@ static void websocket_send_status(void)
                     case CHAIN_ANGLE_TYPE_CODE: {
                         cJSON_AddNumberToObject(hid_config, "angle_func",
                                                 dev_status->hid_config.angle_config.angle_func);
+                        break;
+                    }
+                    case CHAIN_PEDAL_TYPE_CODE: {
+                        cJSON_AddNumberToObject(hid_config, "single_click",
+                                                dev_status->hid_config.pedal_config.single_click);
+                        cJSON_AddNumberToObject(hid_config, "double_click",
+                                                dev_status->hid_config.pedal_config.double_click);
+                        cJSON_AddNumberToObject(hid_config, "long_press",
+                                                dev_status->hid_config.pedal_config.long_press);
+                        cJSON_AddNumberToObject(hid_config, "press_down",
+                                                dev_status->hid_config.pedal_config.press_down);
+                        cJSON_AddNumberToObject(hid_config, "press_release",
+                                                dev_status->hid_config.pedal_config.press_release);
+                        break;
+                    }
+                    case CHAIN_MIC_TYPE_CODE: {
+                        cJSON_AddNumberToObject(hid_config, "high_threshold_func",
+                                                dev_status->hid_config.mic_config.high_threshold_func);
+                        cJSON_AddNumberToObject(hid_config, "low_threshold_func",
+                                                dev_status->hid_config.mic_config.low_threshold_func);
+                        cJSON_AddNumberToObject(hid_config, "threshold", dev_status->hid_config.mic_config.threshold);
+                        cJSON_AddNumberToObject(hid_config, "trigger_interval_ms",
+                                                dev_status->hid_config.mic_config.trigger_interval_ms);
+                        break;
+                    }
+                    case CHAIN_SWITCH_TYPE_CODE: {
+                        cJSON_AddNumberToObject(hid_config, "open_func",
+                                                dev_status->hid_config.switch_config.open_func);
+                        cJSON_AddNumberToObject(hid_config, "close_func",
+                                                dev_status->hid_config.switch_config.close_func);
+                        break;
+                    }
+                    case CHAIN_DLight_TYPE_CODE: {
+                        cJSON_AddNumberToObject(hid_config, "lux_high_func",
+                                                dev_status->hid_config.dlight_config.lux_high_func);
+                        cJSON_AddNumberToObject(hid_config, "lux_low_func",
+                                                dev_status->hid_config.dlight_config.lux_low_func);
+                        cJSON_AddNumberToObject(hid_config, "high_threshold",
+                                                dev_status->hid_config.dlight_config.high_threshold);
+                        cJSON_AddNumberToObject(hid_config, "low_threshold",
+                                                dev_status->hid_config.dlight_config.low_threshold);
+                        break;
+                    }
+                    case CHAIN_PIR_TYPE_CODE: {
+                        cJSON_AddNumberToObject(hid_config, "person_come_func",
+                                                dev_status->hid_config.pir_config.person_come_func);
+                        cJSON_AddNumberToObject(hid_config, "person_leave_func",
+                                                dev_status->hid_config.pir_config.person_leave_func);
                         break;
                     }
                     default:
@@ -1450,9 +1690,11 @@ static httpd_handle_t start_webserver(void)
     }
 
     httpd_config_t config   = HTTPD_DEFAULT_CONFIG();
+    config.stack_size       = 1024 * 8;
     config.max_open_sockets = 6;
-    config.max_uri_handlers = 20;
+    config.max_uri_handlers = 32;
     config.lru_purge_enable = true;
+    config.uri_match_fn     = httpd_uri_match_wildcard;
 
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
     if (httpd_start(&server, &config) == ESP_OK) {
@@ -1476,35 +1718,7 @@ static httpd_handle_t start_webserver(void)
         httpd_uri_t favicon_uri = {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler};
         httpd_register_uri_handler(server, &favicon_uri);
 
-        httpd_uri_t chain_angle_uri = {
-            .uri = "/Chain_Angle.jpg", .method = HTTP_GET, .handler = chain_angle_get_handler};
-        httpd_register_uri_handler(server, &chain_angle_uri);
-
-        httpd_uri_t chain_blank_uri = {
-            .uri = "/Chain_Blank.jpg", .method = HTTP_GET, .handler = chain_blank_get_handler};
-        httpd_register_uri_handler(server, &chain_blank_uri);
-
-        httpd_uri_t chain_dualKey_uri = {
-            .uri = "/Chain_DualKey.png", .method = HTTP_GET, .handler = chain_dualKey_get_handler};
-        httpd_register_uri_handler(server, &chain_dualKey_uri);
-
-        httpd_uri_t chain_encoder_uri = {
-            .uri = "/Chain_Encoder.jpg", .method = HTTP_GET, .handler = chain_encoder_get_handler};
-        httpd_register_uri_handler(server, &chain_encoder_uri);
-
-        httpd_uri_t chain_joystick_uri = {
-            .uri = "/Chain_Joystick.jpg", .method = HTTP_GET, .handler = chain_joystick_get_handler};
-        httpd_register_uri_handler(server, &chain_joystick_uri);
-
-        httpd_uri_t chain_key_uri = {.uri = "/Chain_Key.jpg", .method = HTTP_GET, .handler = chain_key_get_handler};
-        httpd_register_uri_handler(server, &chain_key_uri);
-
-        httpd_uri_t chain_mount_uri = {
-            .uri = "/Chain_Mount.jpg", .method = HTTP_GET, .handler = chain_mount_get_handler};
-        httpd_register_uri_handler(server, &chain_mount_uri);
-
-        httpd_uri_t chain_tof_uri = {.uri = "/Chain_ToF.jpg", .method = HTTP_GET, .handler = chain_tof_get_handler};
-        httpd_register_uri_handler(server, &chain_tof_uri);
+        web_assets_register_handlers(server);
 
         // 注册404错误处理器
         httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404_error_handler);

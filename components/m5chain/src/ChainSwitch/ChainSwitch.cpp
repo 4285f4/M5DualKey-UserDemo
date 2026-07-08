@@ -1,4 +1,10 @@
-#include "ChainSwitch.hpp"
+/*
+ * SPDX-FileCopyrightText: 2026 M5Stack Technology CO LTD
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+#include "ChainSwitch/ChainSwitch.hpp"
 
 chain_status_t ChainSwitch::getSwitch12BitAdc(uint8_t id, uint16_t *adcValue, unsigned long timeout)
 {
@@ -47,7 +53,7 @@ chain_status_t ChainSwitch::getSwitch8BitAdc(uint8_t id, uint8_t *adcValue, unsi
     return status;
 }
 chain_status_t ChainSwitch::setSwitchDirection(uint8_t id, switch_direction_t direction, uint8_t *operationStatus,
-                                             uint8_t saveToFlash, unsigned long timeout)
+                                               uint8_t saveToFlash, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
     if (acquireMutex()) {
@@ -96,13 +102,14 @@ chain_status_t ChainSwitch::getSwitchDirection(uint8_t id, switch_direction_t *d
     return status;
 }
 
-chain_status_t ChainSwitch::setSwitchThresholdValue(uint8_t id, uint16_t open_threshold, uint16_t close_threshold, uint8_t *operationStatus, 
-                                    uint8_t saveToFlash, unsigned long timeout)
+chain_status_t ChainSwitch::setSwitchThresholdValue(uint8_t id, uint16_t open_threshold, uint16_t close_threshold,
+                                                    uint8_t *operationStatus, uint8_t saveToFlash,
+                                                    unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
 
-    if ((open_threshold > 4095) || (close_threshold > 4095) || (open_threshold < close_threshold)) {
-        return CHAIN_PARAMETER_ERROR; 
+    if ((open_threshold > 4095) || (close_threshold > 4095) || (open_threshold <= close_threshold)) {
+        return CHAIN_PARAMETER_ERROR;
     }
 
     if (acquireMutex()) {
@@ -131,7 +138,8 @@ chain_status_t ChainSwitch::setSwitchThresholdValue(uint8_t id, uint16_t open_th
     return status;
 }
 
-chain_status_t ChainSwitch::getSwitchThresholdValue(uint8_t id, uint16_t* open_threshold, uint16_t* close_threshold, unsigned long timeout)
+chain_status_t ChainSwitch::getSwitchThresholdValue(uint8_t id, uint16_t *open_threshold, uint16_t *close_threshold,
+                                                    unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
     if (acquireMutex()) {
@@ -141,7 +149,7 @@ chain_status_t ChainSwitch::getSwitchThresholdValue(uint8_t id, uint16_t* open_t
 
         if (waitForData(id, CHAIN_SWITCH_GET_THRESHOLD, timeout)) {
             if (checkPacket(reinterpret_cast<const uint8_t *>(returnPacket), returnPacketSize)) {
-                *open_threshold = returnPacket[6] | (returnPacket[7] << 8);
+                *open_threshold  = returnPacket[6] | (returnPacket[7] << 8);
                 *close_threshold = returnPacket[8] | (returnPacket[9] << 8);
             } else {
                 status = CHAIN_RETURN_PACKET_ERROR;
@@ -180,7 +188,8 @@ chain_status_t ChainSwitch::getSwitchStatus(uint8_t id, switch_status_type_t *sw
     return status;
 }
 
-chain_status_t ChainSwitch::setSwitchAutoTriggerMode(uint8_t id, chain_slip_mode_t auto_status, uint8_t* operationStatus, unsigned long timeout)
+chain_status_t ChainSwitch::setSwitchAutoTriggerMode(uint8_t id, chain_slip_mode_t auto_status,
+                                                     uint8_t *operationStatus, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
     if (acquireMutex()) {
@@ -204,7 +213,7 @@ chain_status_t ChainSwitch::setSwitchAutoTriggerMode(uint8_t id, chain_slip_mode
     return status;
 }
 
-chain_status_t ChainSwitch::getSwitchAutoTriggerMode(uint8_t id, chain_slip_mode_t* auto_status, unsigned long timeout)
+chain_status_t ChainSwitch::getSwitchAutoTriggerMode(uint8_t id, chain_slip_mode_t *auto_status, unsigned long timeout)
 {
     chain_status_t status = CHAIN_OK;
     if (acquireMutex()) {

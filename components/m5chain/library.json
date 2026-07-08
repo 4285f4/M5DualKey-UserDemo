@@ -1,31 +1,64 @@
 {
   "name": "M5Chain",
   "version": "1.0.0",
-  "description": "M5Chain modules library for various sensors and devices",
+  "description": "Arduino library for M5Stack Chain devices, including Chain Joystick and Chain Key modules.",
   "keywords": [
     "M5Stack",
     "Chain",
-    "Sensor"
+    "Joystick",
+    "Key",
+    "Encoder",
+    "Angle",
+    "ToF",
+    "ChainBus",
+    "Buzzer",
+    "MIC",
+    "Pedal",
+    "PIR",
+    "Switch",
+    "UnitChainBus",
+    "Unit8Servos2Chain",
+    "Mono",
+    "RGB",
+    "DLight"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/YourUserName/M5Chain"
+    "url": ""
   },
   "authors": [
     {
-      "name": "Your Name",
-      "email": "you@example.com",
+      "name": "M5Stack",
       "maintainer": true
     }
   ],
   "license": "MIT",
-  "frameworks": "arduino",
-  "platforms": "*",
+  "frameworks": [
+    "arduino"
+  ],
   "build": {
     "srcFilter": [
       "+<*>"
     ],
-    "flags": "-Isrc/Chain -Isrc/ChainAngle -Isrc/ChainCommon -Isrc/ChainEncoder -Isrc/ChainJoystick -Isrc/ChainKey -Isrc/ChainMIC -Isrc/ChainPIR -Isrc/ChainSwitch -Isrc/ChainToF -Isrc/ChainUart -Isrc/ChainPedal -Isrc/ChainBuzzer"
+    "flags": [
+      "-Isrc/Chain",
+      "-Isrc/ChainCommon",
+      "-Isrc/ChainJoystick",
+      "-Isrc/ChainKey",
+      "-Isrc/ChainEncoder",
+      "-Isrc/ChainAngle",
+      "-Isrc/ChainToF",
+      "-Isrc/UnitChainBus",
+      "-Isrc/ChainBuzzer",
+      "-Isrc/ChainSwitch",
+      "-Isrc/ChainPIR",
+      "-Isrc/Unit8Servos2Chain",
+      "-Isrc/ChainMIC",
+      "-Isrc/ChainPedal",
+      "-Isrc/ChainMono",
+      "-Isrc/ChainRGB",
+      "-Isrc/ChainDLight"
+    ]
   },
   "headers": [
     "M5Chain.h"
