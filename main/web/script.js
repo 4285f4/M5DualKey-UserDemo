@@ -7,7 +7,7 @@ class LanguageManager {
         this.currentLanguage = localStorage.getItem('language') || 'zh';
         this.translations = {
             zh: {
-                title: 'DualKey 控制面板 v0.7',
+                title: 'DualKey 控制面板 v0.7-hotfix',
                 connectionStatus: '连接状态:',
                 lastUpdate: '最后更新:',
                 online: '在线',
@@ -277,7 +277,7 @@ class LanguageManager {
                 pairingTip: '目前仅支持旧主机删除连接后才能与新设备配对',
             },
             en: {
-                title: 'DualKey Control Panel v0.7',
+                title: 'DualKey Control Panel v0.7-hotfix',
                 connectionStatus: 'Connection Status:',
                 lastUpdate: 'Last Update:',
                 online: 'Online',
@@ -1122,7 +1122,7 @@ class DualKeyController {
         if (!deviceElement) {
             // 创建新的设备卡片
             console.log(`创建新设备卡片: ID=${deviceId}, Type=${device.type}`);
-            deviceElement = this.createDeviceElement(device, deviceId);
+            deviceElement = this.createDeviceElement(device, deviceId, busName);
             container.appendChild(deviceElement);
             
             // 初始化刷新开关状态为启用
@@ -1147,7 +1147,7 @@ class DualKeyController {
             // 更新现有设备卡片
             console.log(`更新现有设备卡片: ID=${deviceId}, Type=${device.type}`);
             deviceElement.classList.add('updating');
-            this.updateDeviceElement(deviceElement, device);
+            this.updateDeviceElement(deviceElement, device, busName);
             
             // 同时更新可视化元素
             this.updateVisualElementIfExists(busName, deviceId, device);
@@ -1159,15 +1159,16 @@ class DualKeyController {
         }
     }
 
-    createDeviceElement(device, deviceId) {
+    createDeviceElement(device, deviceId, busName) {
         const deviceDiv = document.createElement('div');
         deviceDiv.className = 'device-item';
         deviceDiv.setAttribute('data-device-id', deviceId);
         deviceDiv.setAttribute('data-device-type', device.type);
         deviceDiv.setAttribute('data-supports-rgb', this.deviceSupportsRGB(device.type));
+        deviceDiv.setAttribute('data-bus', busName);
     
         console.log(`创建设备元素: ID=${deviceId}, Type=${device.type}`);
-        this.updateDeviceElement(deviceDiv, device);
+        this.updateDeviceElement(deviceDiv, device, busName);
         return deviceDiv;
     }
 
@@ -1215,19 +1216,21 @@ class DualKeyController {
     }
 
     // 修复updateDeviceElement方法，确保内容正确显示
-    updateDeviceElement(element, device) {
+    updateDeviceElement(element, device, requestedBusName = null) {
         const hidConfigContent = element.querySelector('.hid-config-content');
         const wasHIDExpanded = hidConfigContent && !hidConfigContent.classList.contains('hidden');
         const existingControlPanel = element.querySelector('.device-control-panel');
 
         const busContainer = element.closest('.bus-status');
-        const isLeftBus = busContainer && busContainer.classList.contains('left-bus');
-        const busName = isLeftBus ? 'left' : 'right';
-        const deviceKey = element.getAttribute('data-device-key');
-        const refreshEnabled = this.deviceRefreshEnabled[busName] && this.deviceRefreshEnabled[busName].get(deviceKey) !== false;
+        const busName = requestedBusName || element.dataset.bus ||
+            (busContainer?.classList.contains('left-bus') ? 'left' : 'right');
+        const deviceId = parseInt(element.getAttribute('data-device-id'), 10);
+        const refreshEnabled = this.deviceRefreshEnabled[busName] &&
+            this.deviceRefreshEnabled[busName].get(deviceId) !== false;
 
         const supportsRGB = this.deviceSupportsRGB(device.type);
         element.setAttribute('data-device-type', device.type);
+        element.setAttribute('data-bus', busName);
 
         const header = element.querySelector('.device-header');
         if (!header) {

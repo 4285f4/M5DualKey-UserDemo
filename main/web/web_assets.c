@@ -4,8 +4,8 @@
 
 static const char* TAG = "web_assets";
 
-#define EMBED_SYM(name)                          \
-    extern const char _binary_##name##_start[];  \
+#define EMBED_SYM(name)                         \
+    extern const char _binary_##name##_start[]; \
     extern const char _binary_##name##_end[]
 
 EMBED_SYM(Chain_8Servos_2_jpg);
