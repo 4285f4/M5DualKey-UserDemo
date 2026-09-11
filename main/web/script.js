@@ -3302,12 +3302,15 @@ class DualKeyController {
     }
 
     // 从设备状态恢复自定义映射UI（设备重连后同步）
+    // 参数是 this.dualkeyState（camelCase 字段），不是 WebSocket 的原始 payload。
+    // 旧代码按 payload 的下划线字段取值，导致 customEnabled 恒为 undefined、函数静默 return，
+    // 页面刷新后就一直停在预设标签 —— 这里统一改成 camelCase。
     restoreCustomMappingUI(dualkey) {
         if (!dualkey) return;
 
-        const customEnabled = dualkey.custom_mapping_enabled;
-        const leftAction    = dualkey.custom_left_action;
-        const rightAction   = dualkey.custom_right_action;
+        const customEnabled = dualkey.customMappingEnabled;
+        const leftAction    = dualkey.customLeftAction;
+        const rightAction   = dualkey.customRightAction;
 
         if (customEnabled === undefined) return;
 
@@ -3353,13 +3356,13 @@ class DualKeyController {
         }
 
         // 恢复长按配置
-        if (typeof dualkey.long_press_ms === 'number') {
+        if (typeof dualkey.longPressMs === 'number') {
             const msEl = document.getElementById('longPressMsInput');
-            if (msEl) msEl.value = Math.min(1000, Math.max(300, dualkey.long_press_ms));
+            if (msEl) msEl.value = Math.min(1000, Math.max(300, dualkey.longPressMs));
         }
         if (leftAction && rightAction) {
-            this.restoreLongUI('left',  dualkey.custom_left_long_action,  leftAction.action_type);
-            this.restoreLongUI('right', dualkey.custom_right_long_action, rightAction.action_type);
+            this.restoreLongUI('left',  dualkey.customLeftLongAction,  leftAction.action_type);
+            this.restoreLongUI('right', dualkey.customRightLongAction, rightAction.action_type);
         }
 
         this.updateMappingStatusDisplay();
