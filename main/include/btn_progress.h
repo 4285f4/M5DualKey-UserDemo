@@ -87,7 +87,13 @@ int btn_progress_get_key_mapping(void);
 typedef enum {
     CUSTOM_ACTION_KEY  = 0,  // 单键 / 组合键 (modifier + keycode)
     CUSTOM_ACTION_TEXT = 1,  // 文本字符串逐字输出
+    CUSTOM_ACTION_NONE = 2,  // 未配置。仅用于"长按动作"槽，表示该键不做长按判定
 } custom_action_type_t;
+
+/** 长按判定默认阈值与允许范围 (ms) */
+#define CUSTOM_LONG_PRESS_DEFAULT_MS 500
+#define CUSTOM_LONG_PRESS_MIN_MS     100
+#define CUSTOM_LONG_PRESS_MAX_MS     2000
 
 /** 自定义按键动作 */
 typedef struct {
@@ -126,6 +132,41 @@ const custom_key_action_t *btn_progress_get_custom_left_action(void);
  * @brief 获取右键自定义动作
  */
 const custom_key_action_t *btn_progress_get_custom_right_action(void);
+
+// ============ 自定义映射：长按（方案B：松手时按按压时长判定） ============
+
+/**
+ * @brief 设置左键长按动作。action->type 为 CUSTOM_ACTION_NONE 表示取消长按。
+ *
+ * 只要某个键配置了长按动作，该键就会延迟到松手时才上报（因此按住不再连发）；
+ * 未配置长按的键保持"按下即上报"的原行为，零额外延迟。
+ */
+void btn_progress_set_custom_long_left_action(const custom_key_action_t *action);
+
+/**
+ * @brief 设置右键长按动作。action->type 为 CUSTOM_ACTION_NONE 表示取消长按。
+ */
+void btn_progress_set_custom_long_right_action(const custom_key_action_t *action);
+
+/**
+ * @brief 获取左键长按动作
+ */
+const custom_key_action_t *btn_progress_get_custom_long_left_action(void);
+
+/**
+ * @brief 获取右键长按动作
+ */
+const custom_key_action_t *btn_progress_get_custom_long_right_action(void);
+
+/**
+ * @brief 设置长按判定阈值 (ms)，会被夹到 [CUSTOM_LONG_PRESS_MIN_MS, CUSTOM_LONG_PRESS_MAX_MS]
+ */
+void btn_progress_set_long_press_ms(uint16_t ms);
+
+/**
+ * @brief 获取长按判定阈值 (ms)
+ */
+uint16_t btn_progress_get_long_press_ms(void);
 
 #ifdef __cplusplus
 }

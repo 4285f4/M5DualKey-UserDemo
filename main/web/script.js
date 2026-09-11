@@ -95,6 +95,8 @@ class LanguageManager {
                 customTextNoticeText: '仅支持 ASCII 可打印字符，暂不支持中文等需编码文字',
                 leftKeyText: '左键文本:',
                 rightKeyText: '右键文本:',
+                longPressEnable: '启用长按',
+                longPressThreshold: '长按判定时间(ms):',
                 noKey: '-- 无 --',
                 // HID功能选项
                 noFunction: '无功能',
@@ -365,6 +367,8 @@ class LanguageManager {
                 customTextNoticeText: 'Only ASCII printable characters are supported. Chinese and other encoded characters are not supported.',
                 leftKeyText: 'Left Key Text:',
                 rightKeyText: 'Right Key Text:',
+                longPressEnable: 'Enable Long Press',
+                longPressThreshold: 'Long Press Threshold (ms):',
                 noKey: '-- None --',
                 // HID功能选项
                 noFunction: 'No Function',
@@ -2628,6 +2632,10 @@ class DualKeyController {
             customMappingEnabled: false,
             customLeftAction:  { action_type: 0, modifier: 0, keycode: 0x4B, text: '' },
             customRightAction: { action_type: 0, modifier: 0, keycode: 0x4E, text: '' },
+            // 长按配置：action_type === 2 表示该键未配置长按
+            customLeftLongAction:  { action_type: 2, modifier: 0, keycode: 0, text: '' },
+            customRightLongAction: { action_type: 2, modifier: 0, keycode: 0, text: '' },
+            longPressMs: 500,
             // WIFI状态
             wifiSSID: "",
             wifiIP: "",
@@ -2775,6 +2783,15 @@ class DualKeyController {
                 }
                 if (data.dualkey.custom_right_action !== undefined) {
                     this.dualkeyState.customRightAction = data.dualkey.custom_right_action;
+                }
+                if (data.dualkey.custom_left_long_action !== undefined) {
+                    this.dualkeyState.customLeftLongAction = data.dualkey.custom_left_long_action;
+                }
+                if (data.dualkey.custom_right_long_action !== undefined) {
+                    this.dualkeyState.customRightLongAction = data.dualkey.custom_right_long_action;
+                }
+                if (data.dualkey.long_press_ms !== undefined) {
+                    this.dualkeyState.longPressMs = data.dualkey.long_press_ms;
                 }
 
                 // 更新WIFI状态
@@ -3039,8 +3056,8 @@ class DualKeyController {
         const usbMappingSwitch = document.getElementById('usbMappingSwitch');
         const bleMappingSwitch = document.getElementById('bleMappingSwitch');
 
-        // ---- 动态填充键码下拉选项 ----
-        ['leftKeyCodeSelect', 'rightKeyCodeSelect'].forEach(id => {
+        // ---- 动态填充键码下拉选项（含长按键码）----
+        ['leftKeyCodeSelect', 'rightKeyCodeSelect', 'leftLongKeyCodeSelect', 'rightLongKeyCodeSelect'].forEach(id => {
             const sel = document.getElementById(id);
             if (!sel) return;
             sel.innerHTML = '';
@@ -3087,6 +3104,24 @@ class DualKeyController {
             });
         }
 
+        // ---- 长按：勾选后展开对应的长按配置面板 ----
+        [
+            ['leftLongEnable',     'left',  0],
+            ['rightLongEnable',    'right', 0],
+            ['leftLongTextEnable', 'left',  1],
+            ['rightLongTextEnable','right', 1],
+        ].forEach(([id, side, actionType]) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('change', () => this.toggleLongPanel(side, actionType, el.checked));
+        });
+
+        // ---- 长按判定阈值 ----
+        const longMsInput = document.getElementById('longPressMsInput');
+        if (longMsInput) {
+            longMsInput.value = this.readLongPressMs();
+        }
+
         // USB映射开关
         if (usbMappingSwitch) {
             usbMappingSwitch.checked = this.dualkeyState.usbMappingEnabled;
@@ -3124,37 +3159,89 @@ class DualKeyController {
             const el = document.getElementById(panelId);
             if (el) el.classList.toggle('hidden', key !== tab);
         });
+
+        // 长按阈值只在"自定义按键 / 自定义文本"两个标签下可见
+        const thresholdRow = document.getElementById('longPressThresholdRow');
+        if (thresholdRow) thresholdRow.classList.toggle('hidden', tab === 'preset');
+    }
+
+    // ---- 长按配置辅助 ----
+
+    // 读取修饰键掩码
+    readModifierMask(idCtrl, idShift, idAlt, idGui) {
+        let mod = 0;
+        if (document.getElementById(idCtrl)  ?.checked) mod |= 0x01;
+        if (document.getElementById(idShift) ?.checked) mod |= 0x02;
+        if (document.getElementById(idAlt)   ?.checked) mod |= 0x04;
+        if (document.getElementById(idGui)   ?.checked) mod |= 0x08;
+        return mod;
+    }
+
+    // 读取长按判定阈值，夹到 [300, 1000]
+    readLongPressMs() {
+        const el = document.getElementById('longPressMsInput');
+        let v = parseInt(el?.value ?? '500', 10);
+        if (!Number.isFinite(v)) v = 500;
+        return Math.min(1000, Math.max(300, v));
+    }
+
+    // 展开 / 收起某个键的长按配置面板（actionType: 0=按键面板, 1=文本面板）
+    toggleLongPanel(side, actionType, show) {
+        const id = actionType === 0 ? `${side}LongPanel` : `${side}LongTextPanel`;
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', !show);
+    }
+
+    // 组装"按键/组合键"长按动作。未勾选启用时返回 action_type=2(CUSTOM_ACTION_NONE)，
+    // 设备端据此完全不做长按判定，保持按下即上报的零延迟手感
+    buildLongKeyAction(side) {
+        const enabled = !!document.getElementById(`${side}LongEnable`)?.checked;
+        if (!enabled) return { action_type: 2, modifier: 0, keycode: 0, text: '' };
+        const modifier = this.readModifierMask(
+            `${side}LongModCtrl`, `${side}LongModShift`, `${side}LongModAlt`, `${side}LongModGui`);
+        const keycode = parseInt(document.getElementById(`${side}LongKeyCodeSelect`)?.value || '0', 10) || 0;
+        return { action_type: 0, modifier, keycode, text: '' };
+    }
+
+    // 组装"文本"长按动作。未勾选启用时返回 action_type=2(CUSTOM_ACTION_NONE)
+    buildLongTextAction(side) {
+        const enabled = !!document.getElementById(`${side}LongTextEnable`)?.checked;
+        if (!enabled) return { action_type: 2, modifier: 0, keycode: 0, text: '' };
+        const text = (document.getElementById(`${side}LongText`)?.value || '').substring(0, 63);
+        return { action_type: 1, modifier: 0, keycode: 0, text };
     }
 
     // 应用自定义按键 / 组合键
     applyCustomKeyMapping() {
-        const getModifier = (idCtrl, idShift, idAlt, idGui) => {
-            let mod = 0;
-            if (document.getElementById(idCtrl)  ?.checked) mod |= 0x01;
-            if (document.getElementById(idShift) ?.checked) mod |= 0x02;
-            if (document.getElementById(idAlt)   ?.checked) mod |= 0x04;
-            if (document.getElementById(idGui)   ?.checked) mod |= 0x08;
-            return mod;
-        };
-        const leftMod  = getModifier('leftModCtrl',  'leftModShift',  'leftModAlt',  'leftModGui');
-        const rightMod = getModifier('rightModCtrl', 'rightModShift', 'rightModAlt', 'rightModGui');
-        const leftKc   = parseInt(document.getElementById('leftKeyCodeSelect') ?.value  || '0');
-        const rightKc  = parseInt(document.getElementById('rightKeyCodeSelect')?.value || '0');
+        const leftMod  = this.readModifierMask('leftModCtrl',  'leftModShift',  'leftModAlt',  'leftModGui');
+        const rightMod = this.readModifierMask('rightModCtrl', 'rightModShift', 'rightModAlt', 'rightModGui');
+        const leftKc   = parseInt(document.getElementById('leftKeyCodeSelect') ?.value  || '0', 10) || 0;
+        const rightKc  = parseInt(document.getElementById('rightKeyCodeSelect')?.value || '0', 10) || 0;
 
         const leftAction  = { action_type: 0, modifier: leftMod,  keycode: leftKc,  text: '' };
         const rightAction = { action_type: 0, modifier: rightMod, keycode: rightKc, text: '' };
+
+        const leftLongAction  = this.buildLongKeyAction('left');
+        const rightLongAction = this.buildLongKeyAction('right');
+        const longPressMs     = this.readLongPressMs();
 
         this.sendMessage({
             type: 'set_custom_mapping',
             enabled: true,
             left_key:  leftAction,
             right_key: rightAction,
+            long_left:  leftLongAction,
+            long_right: rightLongAction,
+            long_press_ms: longPressMs,
         });
 
         // 同步本地状态
-        this.dualkeyState.customMappingEnabled = true;
-        this.dualkeyState.customLeftAction     = leftAction;
-        this.dualkeyState.customRightAction    = rightAction;
+        this.dualkeyState.customMappingEnabled  = true;
+        this.dualkeyState.customLeftAction      = leftAction;
+        this.dualkeyState.customRightAction     = rightAction;
+        this.dualkeyState.customLeftLongAction  = leftLongAction;
+        this.dualkeyState.customRightLongAction = rightLongAction;
+        this.dualkeyState.longPressMs           = longPressMs;
         this.hidStatusCache.customMappingEnabled = true;
         this.hidStatusCache.customLeftAction     = leftAction;
         this.hidStatusCache.customRightAction    = rightAction;
@@ -3177,17 +3264,27 @@ class DualKeyController {
         const leftAction  = { action_type: 1, modifier: 0, keycode: 0, text: leftText };
         const rightAction = { action_type: 1, modifier: 0, keycode: 0, text: rightText };
 
+        const leftLongAction  = this.buildLongTextAction('left');
+        const rightLongAction = this.buildLongTextAction('right');
+        const longPressMs     = this.readLongPressMs();
+
         this.sendMessage({
             type: 'set_custom_mapping',
             enabled: true,
             left_key:  leftAction,
             right_key: rightAction,
+            long_left:  leftLongAction,
+            long_right: rightLongAction,
+            long_press_ms: longPressMs,
         });
 
         // 同步本地状态
-        this.dualkeyState.customMappingEnabled = true;
-        this.dualkeyState.customLeftAction     = leftAction;
-        this.dualkeyState.customRightAction    = rightAction;
+        this.dualkeyState.customMappingEnabled  = true;
+        this.dualkeyState.customLeftAction      = leftAction;
+        this.dualkeyState.customRightAction     = rightAction;
+        this.dualkeyState.customLeftLongAction  = leftLongAction;
+        this.dualkeyState.customRightLongAction = rightLongAction;
+        this.dualkeyState.longPressMs           = longPressMs;
         this.hidStatusCache.customMappingEnabled = true;
         this.hidStatusCache.customLeftAction     = leftAction;
         this.hidStatusCache.customRightAction    = rightAction;
@@ -3253,7 +3350,46 @@ class DualKeyController {
             }
         }
 
+        // 恢复长按配置
+        if (typeof dualkey.long_press_ms === 'number') {
+            const msEl = document.getElementById('longPressMsInput');
+            if (msEl) msEl.value = Math.min(1000, Math.max(300, dualkey.long_press_ms));
+        }
+        if (leftAction && rightAction) {
+            this.restoreLongUI('left',  dualkey.custom_left_long_action,  leftAction.action_type);
+            this.restoreLongUI('right', dualkey.custom_right_long_action, rightAction.action_type);
+        }
+
         this.updateMappingStatusDisplay();
+    }
+
+    // 恢复单个键的长按 UI。actionType 跟随短按动作类型：0=按键面板，1=文本面板
+    // 长按动作的 action_type === 2 表示未配置
+    restoreLongUI(side, longAction, actionType) {
+        const hasLong = !!longAction && longAction.action_type !== 2;
+
+        if (actionType === 0) {
+            const en = document.getElementById(`${side}LongEnable`);
+            if (en) en.checked = hasLong;
+            if (hasLong) {
+                const el = (id) => document.getElementById(id);
+                if (el(`${side}LongModCtrl`))  el(`${side}LongModCtrl`).checked  = !!(longAction.modifier & 0x01);
+                if (el(`${side}LongModShift`)) el(`${side}LongModShift`).checked = !!(longAction.modifier & 0x02);
+                if (el(`${side}LongModAlt`))   el(`${side}LongModAlt`).checked   = !!(longAction.modifier & 0x04);
+                if (el(`${side}LongModGui`))   el(`${side}LongModGui`).checked   = !!(longAction.modifier & 0x08);
+                const sel = el(`${side}LongKeyCodeSelect`);
+                if (sel) sel.value = longAction.keycode;
+            }
+        } else if (actionType === 1) {
+            const en = document.getElementById(`${side}LongTextEnable`);
+            if (en) en.checked = hasLong;
+            if (hasLong) {
+                const inp = document.getElementById(`${side}LongText`);
+                if (inp) inp.value = longAction.text || '';
+            }
+        }
+
+        this.toggleLongPanel(side, actionType, hasLong);
     }
 
     // 蓝牙控制

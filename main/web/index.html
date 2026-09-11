@@ -179,6 +179,21 @@
                                     <select id="leftKeyCodeSelect" class="key-select" title="左键键码" aria-label="左键键码选择">
                                         <!-- 由 JS 动态填充 -->
                                     </select>
+                                    <label class="modifier-check long-press-enable">
+                                        <input type="checkbox" id="leftLongEnable" title="启用长按" aria-label="启用左键长按">
+                                        <span data-i18n="longPressEnable">启用长按</span>
+                                    </label>
+                                    <div id="leftLongPanel" class="long-press-panel hidden">
+                                        <div class="modifier-group">
+                                            <label class="modifier-check"><input type="checkbox" id="leftLongModCtrl"> Ctrl</label>
+                                            <label class="modifier-check"><input type="checkbox" id="leftLongModShift"> Shift</label>
+                                            <label class="modifier-check"><input type="checkbox" id="leftLongModAlt"> Alt/Opt</label>
+                                            <label class="modifier-check"><input type="checkbox" id="leftLongModGui"> Win/Cmd</label>
+                                        </div>
+                                        <select id="leftLongKeyCodeSelect" class="key-select" title="左键长按键码" aria-label="左键长按键码选择">
+                                            <!-- 由 JS 动态填充 -->
+                                        </select>
+                                    </div>
                                 </div>
                                 <div class="custom-key-section">
                                     <span class="custom-key-title" data-i18n="rightKey">右键</span>
@@ -191,6 +206,21 @@
                                     <select id="rightKeyCodeSelect" class="key-select" title="右键键码" aria-label="右键键码选择">
                                         <!-- 由 JS 动态填充 -->
                                     </select>
+                                    <label class="modifier-check long-press-enable">
+                                        <input type="checkbox" id="rightLongEnable" title="启用长按" aria-label="启用右键长按">
+                                        <span data-i18n="longPressEnable">启用长按</span>
+                                    </label>
+                                    <div id="rightLongPanel" class="long-press-panel hidden">
+                                        <div class="modifier-group">
+                                            <label class="modifier-check"><input type="checkbox" id="rightLongModCtrl"> Ctrl</label>
+                                            <label class="modifier-check"><input type="checkbox" id="rightLongModShift"> Shift</label>
+                                            <label class="modifier-check"><input type="checkbox" id="rightLongModAlt"> Alt/Opt</label>
+                                            <label class="modifier-check"><input type="checkbox" id="rightLongModGui"> Win/Cmd</label>
+                                        </div>
+                                        <select id="rightLongKeyCodeSelect" class="key-select" title="右键长按键码" aria-label="右键长按键码选择">
+                                            <!-- 由 JS 动态填充 -->
+                                        </select>
+                                    </div>
                                 </div>
                                 <button class="btn btn-primary" id="applyCustomKeyBtn" data-i18n="apply">应用</button>
                             </div>
@@ -204,12 +234,33 @@
                                 <div class="custom-text-section">
                                     <label for="leftKeyText" class="custom-text-label" data-i18n="leftKeyText">左键文本:</label>
                                     <input type="text" id="leftKeyText" class="custom-text-input" placeholder="" maxlength="63" title="左键文本输入" aria-label="左键文本">
+                                    <label class="modifier-check long-press-enable">
+                                        <input type="checkbox" id="leftLongTextEnable" title="启用长按" aria-label="启用左键长按文本">
+                                        <span data-i18n="longPressEnable">启用长按</span>
+                                    </label>
+                                    <div id="leftLongTextPanel" class="long-press-panel hidden">
+                                        <input type="text" id="leftLongText" class="custom-text-input" placeholder="" maxlength="63" title="左键长按文本" aria-label="左键长按文本">
+                                    </div>
                                 </div>
                                 <div class="custom-text-section">
                                     <label for="rightKeyText" class="custom-text-label" data-i18n="rightKeyText">右键文本:</label>
                                     <input type="text" id="rightKeyText" class="custom-text-input" placeholder="" maxlength="63" title="右键文本输入" aria-label="右键文本">
+                                    <label class="modifier-check long-press-enable">
+                                        <input type="checkbox" id="rightLongTextEnable" title="启用长按" aria-label="启用右键长按文本">
+                                        <span data-i18n="longPressEnable">启用长按</span>
+                                    </label>
+                                    <div id="rightLongTextPanel" class="long-press-panel hidden">
+                                        <input type="text" id="rightLongText" class="custom-text-input" placeholder="" maxlength="63" title="右键长按文本" aria-label="右键长按文本">
+                                    </div>
                                 </div>
                                 <button class="btn btn-primary" id="applyCustomTextBtn" data-i18n="apply">应用</button>
+                            </div>
+
+                            <!-- 长按判定阈值（自定义按键 / 自定义文本共用） -->
+                            <div class="long-press-threshold hidden" id="longPressThresholdRow">
+                                <label for="longPressMsInput" data-i18n="longPressThreshold">长按判定时间(ms):</label>
+                                <input type="number" id="longPressMsInput" min="300" max="1000" step="50" value="500"
+                                       title="长按判定时间" aria-label="长按判定时间">
                             </div>
                         </div>
                         <div class="mapping-switches">

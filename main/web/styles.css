@@ -2005,6 +2005,59 @@ input:checked+.toggle-slider:before {
     box-shadow: 0 0 0 2px rgba(0, 100, 194, 0.15);
 }
 
+/* 长按配置（自定义按键 / 自定义文本共用） */
+.long-press-enable {
+    align-self: flex-start;
+    margin-top: 6px;
+    border-style: dashed;
+}
+
+.long-press-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    /* 父容器是 flex-wrap 的横向布局，占满整行另起一行 */
+    flex: 1 1 100%;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 6px;
+    padding: 8px;
+    border-left: 2px solid rgba(0, 100, 194, 0.35);
+    background: rgba(0, 100, 194, 0.04);
+    border-radius: 0 6px 6px 0;
+}
+
+/* 提高优先级，确保能覆盖上面的 display: flex */
+.long-press-panel.hidden,
+.long-press-threshold.hidden {
+    display: none;
+}
+
+.long-press-threshold {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 0.82rem;
+    color: #444;
+}
+
+.long-press-threshold input[type="number"] {
+    width: 84px;
+    padding: 5px 8px;
+    border: 1px solid #d0d0d0;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: #333;
+    background: #fff;
+}
+
+.long-press-threshold input[type="number"]:focus {
+    outline: none;
+    border-color: rgb(0, 100, 194);
+    box-shadow: 0 0 0 2px rgba(0, 100, 194, 0.15);
+}
+
 /* 自定义文本提示 */
 .custom-text-notice {
     display: flex;

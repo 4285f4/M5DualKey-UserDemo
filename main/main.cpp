@@ -159,6 +159,17 @@ typedef struct {
     uint32_t crc32;                           // CRC校验
 } dualkey_saved_config_t;
 
+// 长按配置：单独存一个 NVS key。
+// 不并入 dualkey_saved_config_t，是为了避免结构扩容导致老用户配置的 blob 长度/CRC
+// 校验失败而被重置为默认值。
+typedef struct {
+    custom_key_action_t left_long_action;   // 左键长按动作，type==CUSTOM_ACTION_NONE 表示未配置
+    custom_key_action_t right_long_action;  // 右键长按动作
+    uint16_t long_press_ms;                 // 长按判定阈值 (ms)
+    uint16_t reserved;                      // 显式填充，保证结构布局稳定
+    uint32_t crc32;                         // CRC校验
+} dualkey_longpress_saved_t;
+
 // 状态数据结构
 typedef struct {
     bool left_key_pressed;
@@ -231,6 +242,11 @@ static void set_key_rgb_color(int key_index, uint32_t rgb_color);
 static esp_err_t dualkey_config_save(void);
 static esp_err_t dualkey_config_load(void);
 static uint32_t dualkey_config_calculate_crc(const dualkey_saved_config_t *config);
+
+// 长按配置保存和加载函数声明（独立 NVS key）
+static esp_err_t dualkey_longpress_config_save(void);
+static esp_err_t dualkey_longpress_config_load(void);
+static uint32_t dualkey_longpress_calculate_crc(const dualkey_longpress_saved_t *config);
 
 // WiFi配置保存和加载函数声明
 static esp_err_t wifi_config_save(const wifi_config_saved_t *config);
@@ -1148,6 +1164,9 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                     cJSON *enabled_json = cJSON_GetObjectItem(json, "enabled");
                     cJSON *left_key     = cJSON_GetObjectItem(json, "left_key");
                     cJSON *right_key    = cJSON_GetObjectItem(json, "right_key");
+                    cJSON *long_left    = cJSON_GetObjectItem(json, "long_left");
+                    cJSON *long_right   = cJSON_GetObjectItem(json, "long_right");
+                    cJSON *long_ms      = cJSON_GetObjectItem(json, "long_press_ms");
 
                     if (enabled_json && cJSON_IsBool(enabled_json)) {
                         bool custom_en = cJSON_IsTrue(enabled_json);
@@ -1170,6 +1189,27 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                             strncpy(out->text, text->valuestring, CUSTOM_TEXT_MAX_LEN - 1);
                     };
 
+                    // 长按动作：缺省时默认为"未配置"(CUSTOM_ACTION_NONE)，
+                    // 网页用 action_type=2 显式取消某个键的长按
+                    auto parse_long_key_action = [](cJSON *key_obj, custom_key_action_t *out) {
+                        if (!key_obj || !cJSON_IsObject(key_obj)) return;
+                        memset(out, 0, sizeof(custom_key_action_t));
+                        out->type          = CUSTOM_ACTION_NONE;
+                        cJSON *action_type = cJSON_GetObjectItem(key_obj, "action_type");
+                        cJSON *modifier    = cJSON_GetObjectItem(key_obj, "modifier");
+                        cJSON *keycode     = cJSON_GetObjectItem(key_obj, "keycode");
+                        cJSON *text        = cJSON_GetObjectItem(key_obj, "text");
+                        if (action_type && cJSON_IsNumber(action_type)) {
+                            int t = (int)action_type->valueint;
+                            out->type =
+                                (t >= 0 && t <= (int)CUSTOM_ACTION_NONE) ? (custom_action_type_t)t : CUSTOM_ACTION_NONE;
+                        }
+                        if (modifier && cJSON_IsNumber(modifier)) out->modifier = (uint8_t)modifier->valueint;
+                        if (keycode && cJSON_IsNumber(keycode)) out->keycode = (uint8_t)keycode->valueint;
+                        if (text && cJSON_IsString(text))
+                            strncpy(out->text, text->valuestring, CUSTOM_TEXT_MAX_LEN - 1);
+                    };
+
                     if (left_key) {
                         custom_key_action_t action = {};
                         parse_key_action(left_key, &action);
@@ -1179,6 +1219,20 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                         custom_key_action_t action = {};
                         parse_key_action(right_key, &action);
                         btn_progress_set_custom_right_action(&action);
+                    }
+                    // 长按字段缺省表示"保持不变"，避免只切映射开关时清掉已配好的长按
+                    if (long_left) {
+                        custom_key_action_t action = {};
+                        parse_long_key_action(long_left, &action);
+                        btn_progress_set_custom_long_left_action(&action);
+                    }
+                    if (long_right) {
+                        custom_key_action_t action = {};
+                        parse_long_key_action(long_right, &action);
+                        btn_progress_set_custom_long_right_action(&action);
+                    }
+                    if (long_ms && cJSON_IsNumber(long_ms)) {
+                        btn_progress_set_long_press_ms((uint16_t)long_ms->valueint);
                     }
 
                     // 自动保存配置
@@ -1262,6 +1316,23 @@ static void websocket_send_status(void)
     cJSON_AddStringToObject(custom_right_json, "text", right_act->text);
     cJSON_AddItemToObject(dualkey, "custom_left_action", custom_left_json);
     cJSON_AddItemToObject(dualkey, "custom_right_action", custom_right_json);
+
+    // 长按配置（type==CUSTOM_ACTION_NONE 表示该键未配置长按）
+    const custom_key_action_t *left_long_act  = btn_progress_get_custom_long_left_action();
+    const custom_key_action_t *right_long_act = btn_progress_get_custom_long_right_action();
+    cJSON *custom_left_long_json              = cJSON_CreateObject();
+    cJSON *custom_right_long_json             = cJSON_CreateObject();
+    cJSON_AddNumberToObject(custom_left_long_json, "action_type", left_long_act->type);
+    cJSON_AddNumberToObject(custom_left_long_json, "modifier", left_long_act->modifier);
+    cJSON_AddNumberToObject(custom_left_long_json, "keycode", left_long_act->keycode);
+    cJSON_AddStringToObject(custom_left_long_json, "text", left_long_act->text);
+    cJSON_AddNumberToObject(custom_right_long_json, "action_type", right_long_act->type);
+    cJSON_AddNumberToObject(custom_right_long_json, "modifier", right_long_act->modifier);
+    cJSON_AddNumberToObject(custom_right_long_json, "keycode", right_long_act->keycode);
+    cJSON_AddStringToObject(custom_right_long_json, "text", right_long_act->text);
+    cJSON_AddItemToObject(dualkey, "custom_left_long_action", custom_left_long_json);
+    cJSON_AddItemToObject(dualkey, "custom_right_long_action", custom_right_long_json);
+    cJSON_AddNumberToObject(dualkey, "long_press_ms", btn_progress_get_long_press_ms());
 
     // WIFI状态
     cJSON_AddStringToObject(dualkey, "wifi_ssid", g_device_status.wifi_ssid);
@@ -2039,6 +2110,9 @@ static esp_err_t dualkey_config_save(void)
     ESP_LOGI(TAG, "DualKey配置已保存: 左键颜色=0x%06lX, 右键颜色=0x%06lX, 映射=%d", config.left_key_color,
              config.right_key_color, config.current_key_mapping);
 
+    // 长按配置使用独立的 NVS key，随配置一起落盘
+    dualkey_longpress_config_save();
+
     return ESP_OK;
 }
 
@@ -2095,6 +2169,9 @@ static esp_err_t dualkey_config_load(void)
     btn_progress_set_custom_left_action(&config.custom_left_action);
     btn_progress_set_custom_right_action(&config.custom_right_action);
 
+    // 应用长按配置（独立 NVS key；不存在时保持默认，即所有按键都不做长按判定）
+    dualkey_longpress_config_load();
+
     // 应用RGB颜色
     vTaskDelay(10 / portTICK_PERIOD_MS);
     if (config.left_key_color != 0x000000 || config.right_key_color != 0x000000) {
@@ -2112,6 +2189,89 @@ static esp_err_t dualkey_config_load(void)
     nvs_close(nvs_handle);
     ESP_LOGI(TAG, "DualKey配置已加载: 左键颜色=0x%06lX, 右键颜色=0x%06lX, 映射=%d", config.left_key_color,
              config.right_key_color, config.current_key_mapping);
+
+    return ESP_OK;
+}
+
+// 计算长按配置的CRC32
+static uint32_t dualkey_longpress_calculate_crc(const dualkey_longpress_saved_t *config)
+{
+    return esp_crc32_le(0, (const uint8_t *)config, sizeof(dualkey_longpress_saved_t) - sizeof(uint32_t));
+}
+
+// 保存长按配置到NVS（独立 key "longpress"）
+static esp_err_t dualkey_longpress_config_save(void)
+{
+    nvs_handle_t nvs_handle;
+    esp_err_t ret = nvs_open("dualkey_cfg", NVS_READWRITE, &nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "打开DualKey配置NVS失败: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    dualkey_longpress_saved_t config;
+    memset(&config, 0, sizeof(config));
+    memcpy(&config.left_long_action, btn_progress_get_custom_long_left_action(), sizeof(custom_key_action_t));
+    memcpy(&config.right_long_action, btn_progress_get_custom_long_right_action(), sizeof(custom_key_action_t));
+    config.long_press_ms = btn_progress_get_long_press_ms();
+    config.crc32         = dualkey_longpress_calculate_crc(&config);
+
+    ret = nvs_set_blob(nvs_handle, "longpress", &config, sizeof(config));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "保存长按配置失败: %s", esp_err_to_name(ret));
+        nvs_close(nvs_handle);
+        return ret;
+    }
+
+    ret = nvs_commit(nvs_handle);
+    nvs_close(nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "提交长按配置失败: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "长按配置已保存: 左type=%d 右type=%d 阈值=%ums", config.left_long_action.type,
+             config.right_long_action.type, (unsigned)config.long_press_ms);
+
+    return ESP_OK;
+}
+
+// 从NVS加载长按配置。不存在或校验失败时不做长按判定（保持默认），不影响主配置
+static esp_err_t dualkey_longpress_config_load(void)
+{
+    nvs_handle_t nvs_handle;
+    esp_err_t ret = nvs_open("dualkey_cfg", NVS_READONLY, &nvs_handle);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    dualkey_longpress_saved_t config;
+    size_t required_size = sizeof(config);
+
+    ret = nvs_get_blob(nvs_handle, "longpress", &config, &required_size);
+    if (ret != ESP_OK) {
+        nvs_close(nvs_handle);
+        if (ret == ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGI(TAG, "长按配置未找到，所有按键均不做长按判定");
+        } else {
+            ESP_LOGW(TAG, "读取长按配置失败: %s", esp_err_to_name(ret));
+        }
+        return ret;
+    }
+
+    if (required_size != sizeof(config) || dualkey_longpress_calculate_crc(&config) != config.crc32) {
+        nvs_close(nvs_handle);
+        ESP_LOGW(TAG, "长按配置长度或CRC校验失败，忽略该配置");
+        return ESP_ERR_INVALID_CRC;
+    }
+
+    btn_progress_set_custom_long_left_action(&config.left_long_action);
+    btn_progress_set_custom_long_right_action(&config.right_long_action);
+    btn_progress_set_long_press_ms(config.long_press_ms);
+
+    nvs_close(nvs_handle);
+    ESP_LOGI(TAG, "长按配置已加载: 左type=%d 右type=%d 阈值=%ums", config.left_long_action.type,
+             config.right_long_action.type, (unsigned)config.long_press_ms);
 
     return ESP_OK;
 }
