@@ -233,10 +233,13 @@ static esp_err_t websocket_handler(httpd_req_t *req);
 static void websocket_send_status(void);
 static void websocket_task(void *pvParameters);
 static void device_status_task(void *pvParameters);
+static void power_indicator_task(void *pvParameters);
 static void update_device_status(void);
 
 // RGB颜色控制函数声明
-static void set_key_rgb_color(int key_index, uint32_t rgb_color);
+static void set_key_rgb_color_locked(int key_index, uint32_t rgb_color);
+static void apply_key_colors(uint32_t left_color, uint32_t right_color);
+static void refresh_key_colors_from_status(void);
 
 // DualKey配置保存和加载函数声明
 static esp_err_t dualkey_config_save(void);
@@ -510,24 +513,28 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                     cJSON *color = cJSON_GetObjectItem(json, "color");
                     if (key && color && cJSON_IsString(key) && cJSON_IsNumber(color)) {
                         uint32_t rgb_color = (uint32_t)color->valueint;
+                        bool recognized    = true;
                         if (strcmp(key->valuestring, "left") == 0) {
                             g_device_status.left_key_color = rgb_color;
                             ESP_LOGI(TAG, "设置左键颜色: 0x%06lX", rgb_color);
-                            set_key_rgb_color(1, rgb_color);  // 左键 LED index 1
-                            // 自动保存配置
-                            dualkey_config_save();
                         } else if (strcmp(key->valuestring, "right") == 0) {
                             g_device_status.right_key_color = rgb_color;
                             ESP_LOGI(TAG, "设置右键颜色: 0x%06lX", rgb_color);
-                            set_key_rgb_color(0, rgb_color);  // 右键 LED index 0
+                        } else {
+                            recognized = false;  // 未识别的 key 字段
+                        }
+                        if (recognized) {
+                            // 成对原子刷新，避免单颗写入被 rgb_matrix 的整带刷新冲掉
+                            refresh_key_colors_from_status();
                             // 自动保存配置
                             dualkey_config_save();
                         }
                     }
                 } else if (strcmp(type->valuestring, "set_key_led_effect") == 0) {
-                    // 按键灯效开关（rgb_matrix 自带的 typing heatmap 效果）
-                    // 直接操作 rgb_matrix 的 enable 位：rgb_matrix_enable()/disable() 内部会写 NVS 持久化，
-                    // 效果本身（typing_heatmap_anim.h）不做任何改动。
+                    // 按键热力灯效开关：本 build 里 rgb_matrix 唯一启用的效果就是
+                    // TYPING_HEATMAP（按下按键那颗灯蓝色亮起并淡出），故它只影响这一效果。
+                    // 直接操作 rgb_matrix 的 enable 位：rgb_matrix_enable()/disable() 内部会写
+                    // NVS 持久化，效果本身（typing_heatmap_anim.h）不做任何改动。
                     cJSON *enabled = cJSON_GetObjectItem(json, "enabled");
                     if (enabled && cJSON_IsBool(enabled)) {
                         const bool en = cJSON_IsTrue(enabled);
@@ -536,12 +543,14 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                         } else {
                             rgb_matrix_disable();
                         }
-                        ESP_LOGI(TAG, "按键灯效: %s", en ? "启用" : "禁用");
-                        // 若配置过自定义静态色：切换到 NONE 效果时会把灯清一次，这里补写回去
+                        ESP_LOGI(TAG, "按键热力灯效: %s", en ? "启用" : "禁用");
+                        // enable 位一变，rgb_matrix 下一次渲染会带 init 标记从而清一次整条灯带。
+                        // 先等它落地，再把用户配置的静态色成对写回，否则会有一颗灯的灯被抹掉。
                         if (g_device_status.left_key_color != 0x000000 || g_device_status.right_key_color != 0x000000) {
-                            vTaskDelay(60 / portTICK_PERIOD_MS);
-                            set_key_rgb_color(1, g_device_status.left_key_color);
-                            set_key_rgb_color(0, g_device_status.right_key_color);
+                            vTaskDelay(80 / portTICK_PERIOD_MS);
+                            refresh_key_colors_from_status();
+                            vTaskDelay(20 / portTICK_PERIOD_MS);
+                            refresh_key_colors_from_status();
                         }
                     }
                 } else if (strcmp(type->valuestring, "get_status") == 0) {
@@ -1790,13 +1799,37 @@ static void update_device_status(void)
     }
 }
 
-static void set_key_rgb_color(int key_index, uint32_t rgb_color)
+/*!< 直接写单颗 LED 像素。调用者须已持有 light_progress_lock()，
+ *   原因见 apply_key_colors()。 */
+static void set_key_rgb_color_locked(int key_index, uint32_t rgb_color)
 {
     uint8_t R = (rgb_color >> 16) & 0xFF;
     uint8_t G = (rgb_color >> 8) & 0xFF;
     uint8_t B = rgb_color & 0xFF;
     led_strip_set_pixel(led_strip, key_index, R, G, B);
     led_strip_refresh(led_strip);
+}
+
+/*!< 原子地写两颗灯：左键 = LED1，右键 = LED0。
+ *
+ *   必须成对写入 —— rgb_matrix 与这里共用同一份像素缓冲且会整条刷新，
+ *   若分成两次独立写，中间可能被它的清屏冲掉一颗（表现为某个键的灯熄灭）。 */
+static void apply_key_colors(uint32_t left_color, uint32_t right_color)
+{
+    light_progress_lock();
+    set_key_rgb_color_locked(1, left_color);
+    set_key_rgb_color_locked(0, right_color);
+    light_progress_unlock();
+}
+
+/*!< 按 g_device_status 里的静态色刷新两颗灯。
+ *   overlay 接管期间（充电电量指示）不动灯，释放后由接管方负责恢复。 */
+static void refresh_key_colors_from_status(void)
+{
+    if (light_progress_is_overlay_active()) {
+        return;
+    }
+    apply_key_colors(g_device_status.left_key_color, g_device_status.right_key_color);
 }
 
 // WebSocket任务
@@ -1834,8 +1867,9 @@ static void device_status_task(void *pvParameters)
 
     while (1) {
         update_device_status();
-        // 电量变化缓慢, 降低 ADC 采样频率(单次采样约 200ms)以省电
-        if (tick % 10 == 0) {
+        // 电量变化缓慢, 降低 ADC 采样频率(单次采样约 200ms)以省电；
+        // 5s 一次是为了让"插入 USB"能在数秒内触发充电电量指示
+        if (tick % 5 == 0) {
             update_power_status(NULL);
         }
         tick++;
@@ -1945,6 +1979,56 @@ static void light_progress_task(void *pvParameters)
         /*!< 顺便作为 10ms 心跳：检查长按是否已到阈值（方案A：到点即触发） */
         btn_progress_tick();
         vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+}
+
+/*!< 充电指示亮度：刻意压到 ~10%，边充边用时不刺眼 */
+#define POWER_LED_BRIGHTNESS 26
+
+/*!< 电量等级 -> 低亮度颜色：红 <20%，琥珀 <60%，绿 >=60%。
+ *   绿色通道人眼更敏感，故用更低的值保持观感一致。 */
+static uint32_t power_indicator_color(int percentage)
+{
+    if (percentage < 20) {
+        return (uint32_t)POWER_LED_BRIGHTNESS << 16;  // 红
+    } else if (percentage < 60) {
+        return ((uint32_t)POWER_LED_BRIGHTNESS << 16) | ((uint32_t)(POWER_LED_BRIGHTNESS / 2) << 8);  // 琥珀
+    }
+    return (uint32_t)(POWER_LED_BRIGHTNESS * 3 / 4) << 8;  // 绿
+}
+
+/*!< 充电电量指示：USB 连接期间以低亮度常亮显示电量等级。
+ *
+ *   rgb_matrix 每 10ms 就会重绘整条灯带，直接写像素会被立刻覆盖，因此必须用 overlay
+ *   接管渲染；断开 USB 后释放 overlay 并恢复按键显示（静态色或热力灯效）。
+ */
+static void power_indicator_task(void *pvParameters)
+{
+    bool overlay_on = false;
+
+    while (1) {
+        if (g_usb_connected) {
+            const uint32_t color = power_indicator_color(g_battery_percentage);
+            if (!overlay_on) {
+                light_progress_set_overlay(true);
+                overlay_on = true;
+            }
+            light_progress_lock();
+            set_key_rgb_color_locked(0, color);  // 右键 LED index 0
+            set_key_rgb_color_locked(1, color);  // 左键 LED index 1
+            light_progress_unlock();
+            vTaskDelay(pdMS_TO_TICKS(1000));  // 常亮；每秒刷新一次电量等级
+        } else if (overlay_on) {
+            overlay_on = false;
+            // 先放开渲染，等可能的一次性清屏落地，再成对恢复按键显示
+            light_progress_set_overlay(false);
+            vTaskDelay(pdMS_TO_TICKS(30));
+            refresh_key_colors_from_status();
+            vTaskDelay(pdMS_TO_TICKS(20));
+            refresh_key_colors_from_status();
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(300));
+        }
     }
 }
 
@@ -2203,11 +2287,10 @@ static esp_err_t dualkey_config_load(void)
             rgb_matrix_set_suspend_state(true);
             vTaskDelay(100 / portTICK_PERIOD_MS);
         }
-        for (int i = 0; i < 2; i++) {
-            set_key_rgb_color(1, config.left_key_color);   // 左键 LED index 1
-            set_key_rgb_color(0, config.right_key_color);  // 右键 LED index 0
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        // 成对原子写入；连写两遍躲避 rgb_matrix 可能的一次性清屏
+        apply_key_colors(config.left_key_color, config.right_key_color);
+        vTaskDelay(20 / portTICK_PERIOD_MS);
+        apply_key_colors(config.left_key_color, config.right_key_color);
     }
 
     nvs_close(nvs_handle);
@@ -2526,6 +2609,9 @@ void app_main(void)
     } else {
         ESP_LOGW(TAG, "DualKey配置加载失败: %s，使用默认配置", esp_err_to_name(dualkey_ret));
     }
+
+    /*!< 充电电量指示（低亮度常亮）：放在配置加载之后，确保静态色已就绪 */
+    xTaskCreate(power_indicator_task, "power_indicator_task", 3072, NULL, 4, NULL);
 
     static uint8_t last_battery_percentage = 255;
     while (1) {

@@ -273,7 +273,7 @@ body {
     transform: scale(1.1);
 }
 
-/* 按键灯效开关 */
+/* 按键热力灯效开关 */
 .key-led-effect {
     display: flex;
     justify-content: space-between;

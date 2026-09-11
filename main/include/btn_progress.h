@@ -77,6 +77,37 @@ void btn_progress_set_report_type(btn_report_type_t type);
  */
 void light_progress(void);
 
+/* ---------- 板载 LED 渲染协调 ----------
+ *
+ * bsp_ws2812 与 rgb_matrix 使用同一个 led_strip 句柄（同一份像素缓冲），而 rgb_matrix
+ * 每次渲染都会刷新整条灯带。主程序若要直接写像素（静态按键色、充电指示），必须与它串行，
+ * 否则"写左灯 + 写右灯"两次调用之间可能被 rgb_matrix 的清屏冲掉（表现为某个键的灯熄灭）。
+ */
+
+/**
+ * @brief 获取板载 LED 访问锁。仅用于直接写像素，不要跨越 vTaskDelay 持有。
+ */
+void light_progress_lock(void);
+
+/**
+ * @brief 释放板载 LED 访问锁。
+ */
+void light_progress_unlock(void);
+
+/**
+ * @brief 接管/释放板载灯带渲染。
+ *
+ * on = true 时暂停 rgb_matrix 渲染，调用方可自行画像素（如充电电量常亮指示）；
+ * 期间按键热力灯效不会显示。置回 false 后 rgb_matrix 恢复正常渲染。
+ * 注意：内部自行加锁，调用时不要持有 light_progress_lock()。
+ */
+void light_progress_set_overlay(bool on);
+
+/**
+ * @brief 当前是否处于 overlay 接管状态。
+ */
+bool light_progress_is_overlay_active(void);
+
 /**
  * @brief Set the key mapping index for button progress.
  *

@@ -33,6 +33,27 @@ static btn_report_type_t report_type = USB_CDC_REPORT;
 // 当前按键映射索引，默认为10（翻页模式）
 static int current_key_mapping_index = 10;
 
+// ---- 板载 LED 渲染协调 ----
+// bsp_ws2812 与 rgb_matrix 共用同一个 led_strip 句柄（同一份像素缓冲），
+// 而 rgb_matrix 每次渲染会刷新整条灯带。主程序直接写像素时若不与它串行，
+// "写左灯 + 写右灯"两次调用之间可能被 rgb_matrix 的清屏冲掉 —— 表现为某个键的灯熄灭。
+static SemaphoreHandle_t light_mutex  = NULL;
+static volatile bool light_overlay_on = false;
+
+static void light_lock(void)
+{
+    if (light_mutex) {
+        xSemaphoreTake(light_mutex, portMAX_DELAY);
+    }
+}
+
+static void light_unlock(void)
+{
+    if (light_mutex) {
+        xSemaphoreGive(light_mutex);
+    }
+}
+
 // ============ 自定义映射状态 ============
 static bool custom_mapping_enabled = false;
 
@@ -335,6 +356,12 @@ void btn_progress_init(void)
         custom_emit_mutex = xSemaphoreCreateMutex();
         if (custom_emit_mutex == NULL) {
             ESP_LOGE("btn_progress", "创建 HID 发送互斥锁失败");
+        }
+    }
+    if (light_mutex == NULL) {
+        light_mutex = xSemaphoreCreateMutex();
+        if (light_mutex == NULL) {
+            ESP_LOGE("btn_progress", "创建 LED 互斥锁失败");
         }
     }
 }
@@ -759,10 +786,37 @@ void btn_progress_tick(void)
 
 void light_progress(void)
 {
-    rgb_matrix_task();
+    light_lock();
+    /*!< overlay 接管期间（如充电电量指示）暂停效果渲染，否则会覆盖接管方画的像素 */
+    if (!light_overlay_on) {
+        rgb_matrix_task();
+    }
+    light_unlock();
 
     // TODO: for Rainmaker light
     // rgb_matrix_set_suspend_state(false);
+}
+
+void light_progress_lock(void)
+{
+    light_lock();
+}
+
+void light_progress_unlock(void)
+{
+    light_unlock();
+}
+
+void light_progress_set_overlay(bool on)
+{
+    light_lock();
+    light_overlay_on = on;
+    light_unlock();
+}
+
+bool light_progress_is_overlay_active(void)
+{
+    return light_overlay_on;
 }
 
 void btn_progress_set_report_type(btn_report_type_t type)
