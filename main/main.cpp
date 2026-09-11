@@ -89,6 +89,55 @@ bool g_ble_mapping_enabled = true;
 uint8_t g_connect_status   = 0;      // 0:未连接, 1:连接中, 2:已连接
 bool g_ble_adv_status      = false;  // 蓝牙广播状态: false=未广播, true=正在广播
 
+/*!< DIP switch (BLE / OFF / WIFI)
+ *   蓝牙档(网页显示 right, 即 SWITCH_1/GPIO8)只开启蓝牙以省电, 其余档位维持蓝牙 + WiFi
+ *   (WiFi 档为 switch_pos 1, 中间 OFF 档为 0)
+ *   DIP_SWITCH_RESTART_ON_BOUNDARY_CHANGE: 档位跨越蓝牙档/非蓝牙档边界时自动重启,
+ *   使 WiFi 启停立即生效。电池供电时切换档位必经中间 OFF 档会自动断电重启,
+ *   该逻辑主要针对 USB 供电场景 */
+#define DIP_SWITCH_POS_CENTER                 0
+#define DIP_SWITCH_POS_WIFI                   1
+#define DIP_SWITCH_POS_BLE                    2
+#define DIP_SWITCH_ADC_THRESHOLD              2000
+#define DIP_SWITCH_READ_SAMPLE_NUM            8
+#define DIP_SWITCH_RESTART_ON_BOUNDARY_CHANGE 1
+
+/*!< 是否需要启用 WiFi(蓝牙档只开蓝牙) */
+static bool dip_switch_wifi_enabled(int pos)
+{
+    return pos != DIP_SWITCH_POS_BLE;
+}
+
+/*!< 阻塞读取拨码开关档位(多次采样取平均, 返回 0=中间 / 1=WiFi档 / 2=蓝牙档) */
+static int dip_switch_read_position(adc_oneshot_unit_handle_t handle)
+{
+    int ble_value  = 0;
+    int wifi_value = 0;
+
+    for (int i = 0; i < DIP_SWITCH_READ_SAMPLE_NUM; i++) {
+        int value = 0;
+        if (adc_oneshot_read(handle, KBD_ADC_SWITCH_BLE_CHAN, &value) == ESP_OK) {
+            ble_value += value;
+        }
+        value = 0;
+        if (adc_oneshot_read(handle, KBD_ADC_SWITCH_RAINMAKER_CHAN, &value) == ESP_OK) {
+            wifi_value += value;
+        }
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+
+    ble_value /= DIP_SWITCH_READ_SAMPLE_NUM;
+    wifi_value /= DIP_SWITCH_READ_SAMPLE_NUM;
+
+    if (ble_value > DIP_SWITCH_ADC_THRESHOLD) {
+        return DIP_SWITCH_POS_BLE;
+    }
+    if (wifi_value > DIP_SWITCH_ADC_THRESHOLD) {
+        return DIP_SWITCH_POS_WIFI;
+    }
+    return DIP_SWITCH_POS_CENTER;
+}
+
 #define enable_web_cache 1  // 1:启用Web缓存, 60分钟不变,ctrl+F5/cmd+shift+R刷新, 0:禁用Web缓存
 
 // 状态刷新消息类型
@@ -172,6 +221,7 @@ static httpd_handle_t start_webserver(void);
 static esp_err_t websocket_handler(httpd_req_t *req);
 static void websocket_send_status(void);
 static void websocket_task(void *pvParameters);
+static void device_status_task(void *pvParameters);
 static void update_device_status(void);
 
 // RGB颜色控制函数声明
@@ -1682,6 +1732,24 @@ static void websocket_task(void *pvParameters)
     }
 }
 
+/*!< 蓝牙档(仅蓝牙)下的设备状态刷新任务
+ *   蓝牙档不启动 HTTP/WebSocket 服务, 但 g_device_status.bluetooth_connected 依赖
+ *   update_device_status() 更新, app_main 主循环据此上报 BLE 电量, 因此不可省略 */
+static void device_status_task(void *pvParameters)
+{
+    int tick = 0;
+
+    while (1) {
+        update_device_status();
+        // 电量变化缓慢, 降低 ADC 采样频率(单次采样约 200ms)以省电
+        if (tick % 10 == 0) {
+            update_power_status(NULL);
+        }
+        tick++;
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 // 启动web服务器
 static httpd_handle_t start_webserver(void)
 {
@@ -1792,20 +1860,34 @@ void adc_switch_task(void *pvParameters)
     sys_param_t *sys_param           = settings_get_parameter();
     btn_report_type_t report_type    = sys_param->report_type;
     report_type                      = ALL_REPORT;  // 默认打印按键 不report kb功能
+    int last_pos                     = switch_pos;  // 开机时已判定, 避免上电误判为档位变化
     while (1) {
         adc_oneshot_read(handle, KBD_ADC_SWITCH_BLE_CHAN, &adc_value[0]);
         adc_oneshot_read(handle, KBD_ADC_SWITCH_RAINMAKER_CHAN, &adc_value[1]);
         g_device_status.switch_1_value = adc_value[0];
         g_device_status.switch_2_value = adc_value[1];
-        if (adc_value[0] > 2000) {
+        if (adc_value[0] > DIP_SWITCH_ADC_THRESHOLD) {
             // report_type = BLE_HID_REPORT;
-            switch_pos = 2;
-        } else if (adc_value[1] > 2000) {
+            switch_pos = DIP_SWITCH_POS_BLE;
+        } else if (adc_value[1] > DIP_SWITCH_ADC_THRESHOLD) {
             // report_type = USB_CDC_REPORT;
-            switch_pos = 1;
+            switch_pos = DIP_SWITCH_POS_WIFI;
         } else {
             // report_type = TINYUSB_HID_REPORT;
-            switch_pos = 0;
+            switch_pos = DIP_SWITCH_POS_CENTER;
+        }
+
+        if (switch_pos != last_pos) {
+            ESP_LOGI(TAG, "DIP switch position changed: %d -> %d", last_pos, switch_pos);
+#if DIP_SWITCH_RESTART_ON_BOUNDARY_CHANGE
+            /*!< WiFi 是否启用由开机时决定, 跨越蓝牙档/非蓝牙档边界需重启才能生效 */
+            if (dip_switch_wifi_enabled(last_pos) != dip_switch_wifi_enabled(switch_pos)) {
+                ESP_LOGW(TAG, "DIP switch crossed BLE/WiFi boundary, restarting to apply");
+                vTaskDelay(pdMS_TO_TICKS(100));
+                esp_restart();
+            }
+#endif
+            last_pos = switch_pos;
         }
 
         // ESP_LOGI(TAG, "adc_value[0]: %d, adc_value[1]: %d", g_device_status.switch_1_value,
@@ -2177,6 +2259,12 @@ void app_main(void)
     adc_oneshot_unit_handle_t handle = NULL;
     ret                              = bsp_get_adc_handle(&handle);
     assert(ret == ESP_OK);
+
+    /*!< Read the DIP switch before wireless init: BLE position runs BLE only */
+    switch_pos = dip_switch_read_position(handle);
+    ESP_LOGI(TAG, "DIP switch position at boot: %d (%s)", switch_pos,
+             dip_switch_wifi_enabled(switch_pos) ? "WiFi enabled" : "BLE only");
+
     xTaskCreate(adc_switch_task, "adc_switch_task", 4096, handle, 5, NULL);
 
     /*!< Init LED and clear WS2812's status */
@@ -2220,14 +2308,21 @@ void app_main(void)
     //         break;
     // }
 
-    // 初始化WiFi
-    wifi_init_sta();
+    /*!< 蓝牙档只开启蓝牙: 跳过 WiFi 与网页服务以省电, 其余档位维持原行为 */
+    if (dip_switch_wifi_enabled(switch_pos)) {
+        // 初始化WiFi
+        wifi_init_sta();
 
-    // 启动web服务器
-    start_webserver();
+        // 启动web服务器
+        start_webserver();
 
-    // 启动WebSocket状态更新任务
-    xTaskCreate(websocket_task, "websocket_task", 1024 * 10, NULL, 5, &websocket_task_handle);
+        // 启动WebSocket状态更新任务
+        xTaskCreate(websocket_task, "websocket_task", 1024 * 10, NULL, 5, &websocket_task_handle);
+    } else {
+        ESP_LOGI(TAG, "DIP switch is in BLE position: WiFi/HTTP disabled, BLE only");
+        // 无网页服务时仍需刷新设备状态, 否则 BLE 电量上报不会触发
+        xTaskCreate(device_status_task, "device_status_task", 4096, NULL, 5, NULL);
+    }
 
     tinyusb_hid_init();
     // tinyusb_cdc_init(NULL, NULL);
