@@ -54,6 +54,18 @@ typedef struct {
 void btn_progress(keyboard_btn_report_t kbd_report);
 
 /**
+ * @brief 初始化（创建 HID 发送互斥锁）。应在按键扫描任务启动前调用一次。
+ */
+void btn_progress_init(void);
+
+/**
+ * @brief 长按到点触发检查，需要由一个约 10ms 周期的任务持续调用。
+ *
+ * 只有"自定义映射 + 配了长按 + 该键正被按住"时才真正做事，其余情况立即返回。
+ */
+void btn_progress_tick(void);
+
+/**
  * @brief Set the report type for button progress.
  *
  * @param type Button report type.
@@ -133,13 +145,14 @@ const custom_key_action_t *btn_progress_get_custom_left_action(void);
  */
 const custom_key_action_t *btn_progress_get_custom_right_action(void);
 
-// ============ 自定义映射：长按（方案B：松手时按按压时长判定） ============
+// ============ 自定义映射：长按（方案A：按住到阈值即触发） ============
 
 /**
  * @brief 设置左键长按动作。action->type 为 CUSTOM_ACTION_NONE 表示取消长按。
  *
- * 只要某个键配置了长按动作，该键就会延迟到松手时才上报（因此按住不再连发）；
- * 未配置长按的键保持"按下即上报"的原行为，零额外延迟。
+ * 配了长按的键：按下后先不发报告，按住到阈值（默认 500ms，见 btn_progress_tick()）
+ * 时立即执行长按动作；未到阈值就松手则判为短按。未配置长按的键保持
+ * "按下即上报"的原行为，零额外延迟。
  */
 void btn_progress_set_custom_long_left_action(const custom_key_action_t *action);
 

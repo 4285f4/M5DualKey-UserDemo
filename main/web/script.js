@@ -40,6 +40,7 @@ class LanguageManager {
                 usbMapping: 'USB映射',
                 bluetoothMapping: '蓝牙映射',
                 currentMappingStatus: '当前映射状态:',
+                longPressLabel: '长按',
                 startBroadcast: '开始广播',
                 stopBroadcast: '关闭广播',
                 pairingMode: '配对模式',
@@ -312,6 +313,7 @@ class LanguageManager {
                 usbMapping: 'USB Mapping',
                 bluetoothMapping: 'Bluetooth Mapping',
                 currentMappingStatus: 'Current Mapping Status:',
+                longPressLabel: 'Long press',
                 startBroadcast: 'Start Broadcast',
                 stopBroadcast: 'Stop Broadcast',
                 pairingMode: 'Pairing Mode',
@@ -3976,6 +3978,7 @@ class DualKeyController {
         const currentMappingName = document.getElementById('currentMappingName');
         const usbMappingDetail   = document.getElementById('usbMappingDetail');
         const bleMappingDetail   = document.getElementById('bleMappingDetail');
+        const longMappingDetail  = document.getElementById('longMappingDetail');
 
         // 从 keyCodeOptions 中查找键名
         const getKeyName = (keycode) => {
@@ -3991,6 +3994,40 @@ class DualKeyController {
             if (modifier & 0x04) parts.push('Alt');
             if (modifier & 0x08) parts.push('GUI');
             return parts.join('+');
+        };
+
+        // 长按动作描述。action_type: 0=键/组合键, 1=文本, 2=未配置（哨兵值）
+        const formatAction = (action) => {
+            if (!action || action.action_type === 2) return '--';
+            if (action.action_type === 1) {
+                const t = action.text || '';
+                return t.length > 12 ? `"${t.substring(0, 12)}…"` : `"${t}"`;
+            }
+            const modStr = getModStr(action.modifier || 0);
+            const keyStr = getKeyName(action.keycode || 0);
+            return modStr ? `${modStr}+${keyStr}` : keyStr;
+        };
+
+        // 长按状态行：仅自定义映射模式下、且至少一个键启用了长按时显示
+        const renderLongPressDetail = () => {
+            if (!longMappingDetail) return;
+            if (!this.dualkeyState.customMappingEnabled) {
+                longMappingDetail.style.display = 'none';
+                return;
+            }
+            const longLeft  = this.dualkeyState.customLeftLongAction;
+            const longRight = this.dualkeyState.customRightLongAction;
+            const leftOn    = !!longLeft && longLeft.action_type !== 2;
+            const rightOn   = !!longRight && longRight.action_type !== 2;
+            if (!leftOn && !rightOn) {
+                longMappingDetail.style.display = 'none';
+                return;
+            }
+            const ms    = this.dualkeyState.longPressMs || 500;
+            const label = languageManager.getText('longPressLabel');
+            longMappingDetail.textContent =
+                `${label} ${ms}ms  L: ${formatAction(longLeft)}  R: ${formatAction(longRight)}`;
+            longMappingDetail.style.display = '';
         };
 
         if (this.dualkeyState.customMappingEnabled) {
@@ -4070,6 +4107,8 @@ class DualKeyController {
                 bleMappingDetail.classList.toggle('disabled', !en);
             }
         }
+
+        renderLongPressDetail();
     }
 
     // updateBusDisplay函数已移除，所有Bus状态更新现在由updateBusChainDisplay处理

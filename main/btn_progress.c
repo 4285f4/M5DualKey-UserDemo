@@ -20,6 +20,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -53,6 +54,10 @@ static custom_key_action_t custom_right_action = {
 static bool custom_left_prev_pressed  = false;
 static bool custom_right_prev_pressed = false;
 
+// 当前是否正被按住。btn_progress() 在按键回调里更新，btn_progress_tick() 在周期任务里读取
+static volatile bool custom_left_down  = false;
+static volatile bool custom_right_down = false;
+
 // ---- 长按动作（方案B：松手时按按压时长判定短按/长按）----
 // type == CUSTOM_ACTION_NONE 表示该键未配置长按。此时该键完全不做长按判定，
 // 走"按下即上报"的原路径，延迟为零。
@@ -76,6 +81,10 @@ static uint16_t custom_long_press_ms = CUSTOM_LONG_PRESS_DEFAULT_MS;
 // 长按判定用的按下时刻 (us)，esp_timer_get_time() 单调递增
 static int64_t custom_left_press_us  = 0;
 static int64_t custom_right_press_us = 0;
+
+// 本次按住期间长按是否已经触发过（方案A：到点即触发，之后松手不再重复）
+static volatile bool custom_left_long_fired  = false;
+static volatile bool custom_right_long_fired = false;
 
 // ---- 修饰键位掩码 ----
 #define MODIFIER_LEFT_CTRL  0x01
@@ -252,6 +261,9 @@ static bool char_to_hid(char c, uint8_t *modifier, uint8_t *keycode)
     return false;
 }
 
+// 统一的上报出口（按 report_type 分发并串行化发送），定义见下方
+static void _report(hid_report_t report);
+
 // 逐字符输出文本字符串（阻塞，每个字符约 10ms press + 10ms release）
 static void type_text_string(const char *text)
 {
@@ -267,37 +279,11 @@ static void type_text_string(const char *text)
         hid_report_t release = {0};
         release.report_id    = REPORT_ID_KEYBOARD;
 
-        // 根据当前 report_type 决定发送方式
-        switch (report_type) {
-            case TINYUSB_HID_REPORT:
-                tinyusb_hid_keyboard_report(press);
-                vTaskDelay(pdMS_TO_TICKS(10));
-                tinyusb_hid_keyboard_report(release);
-                vTaskDelay(pdMS_TO_TICKS(10));
-                break;
-            case BLE_HID_REPORT:
-                ble_hid_keyboard_report(press);
-                vTaskDelay(pdMS_TO_TICKS(10));
-                ble_hid_keyboard_report(release);
-                vTaskDelay(pdMS_TO_TICKS(10));
-                break;
-            case ALL_REPORT:
-                if (g_usb_mapping_enabled) {
-                    tinyusb_hid_keyboard_report(press);
-                    vTaskDelay(pdMS_TO_TICKS(5));
-                    tinyusb_hid_keyboard_report(release);
-                    vTaskDelay(pdMS_TO_TICKS(5));
-                }
-                if (g_ble_mapping_enabled) {
-                    ble_hid_keyboard_report(press);
-                    vTaskDelay(pdMS_TO_TICKS(5));
-                    ble_hid_keyboard_report(release);
-                    vTaskDelay(pdMS_TO_TICKS(5));
-                }
-                break;
-            default:
-                break;
-        }
+        // 统一走 _report()：由它按 report_type 分发，并保证发送串行化
+        _report(press);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        _report(release);
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -324,8 +310,38 @@ static uint8_t hsv_color[HSV_MAX][3] = {
     {43, 255, 255},   // HSV_YELLOW
 };
 
+// HID 键盘报告是"全量状态"，且底层发送接口（尤其 BLE 的 esp_hidd_dev_input_set）并非线程安全。
+// 自定义映射下有两个上下文会发报告：按键回调所在的 kbd_task，与负责长按到点触发的周期任务。
+// 所有发送统一经由这把锁串行化；锁只包住发送本身，绝不跨越 vTaskDelay。
+static SemaphoreHandle_t custom_emit_mutex = NULL;
+
+static inline void custom_emit_lock(void)
+{
+    if (custom_emit_mutex) {
+        xSemaphoreTake(custom_emit_mutex, portMAX_DELAY);
+    }
+}
+
+static inline void custom_emit_unlock(void)
+{
+    if (custom_emit_mutex) {
+        xSemaphoreGive(custom_emit_mutex);
+    }
+}
+
+void btn_progress_init(void)
+{
+    if (custom_emit_mutex == NULL) {
+        custom_emit_mutex = xSemaphoreCreateMutex();
+        if (custom_emit_mutex == NULL) {
+            ESP_LOGE("btn_progress", "创建 HID 发送互斥锁失败");
+        }
+    }
+}
+
 static void _report(hid_report_t report)
 {
+    custom_emit_lock();
     switch (report_type) {
         case TINYUSB_HID_REPORT:
             tinyusb_hid_keyboard_report(report);
@@ -347,6 +363,7 @@ static void _report(hid_report_t report)
         default:
             break;
     }
+    custom_emit_unlock();
 }
 
 // ============ 自定义映射的按键状态与长按辅助 ============
@@ -449,12 +466,15 @@ void btn_progress(keyboard_btn_report_t kbd_report)
 
         const int64_t now_us = esp_timer_get_time();
 
-        // 方案B 在按下这一刻打个时间戳即可，松手时算时长，不需要任何周期任务
+        // 方案A（到点触发）：按下只记时间戳并清掉"已触发"标志，
+        // 真正的长按触发交给 btn_progress_tick() 在按住期间检查
         if (left_has_long && left_edge_down) {
-            custom_left_press_us = now_us;
+            custom_left_press_us   = now_us;
+            custom_left_long_fired = false;
         }
         if (right_has_long && right_edge_down) {
-            custom_right_press_us = now_us;
+            custom_right_press_us   = now_us;
+            custom_right_long_fired = false;
         }
 
         // 未配长按的键：文本仍在按下瞬间触发（保持原行为）
@@ -467,6 +487,8 @@ void btn_progress(keyboard_btn_report_t kbd_report)
 
         custom_left_prev_pressed  = left_now;
         custom_right_prev_pressed = right_now;
+        custom_left_down          = left_now;
+        custom_right_down         = right_now;
 
         // 未配长按的键的"按住"状态（保持按住期间持续发送）
         custom_kbd_state_t held;
@@ -478,23 +500,27 @@ void btn_progress(keyboard_btn_report_t kbd_report)
             custom_state_add(&held, custom_right_action.modifier, custom_right_action.keycode);
         }
 
-        // 配了长按的键：松手时按按压时长决定发短按还是长按
+        // 配了长按的键：长按若已在按住期间触发过，松手不再动作；否则判为短按
         bool tapped = false;
         if (left_has_long && left_edge_up) {
-            const bool is_long                = (now_us - custom_left_press_us) / 1000 >= (int64_t)custom_long_press_ms;
-            const custom_key_action_t *action = is_long ? &custom_left_long_action : &custom_left_action;
-            ESP_LOGI("btn_progress", "左键长按判定: %lld ms -> %s", (long long)((now_us - custom_left_press_us) / 1000),
-                     is_long ? "长按" : "短按");
-            custom_emit_tap(action, &held);
-            tapped = true;
+            if (custom_left_long_fired) {
+                custom_left_long_fired = false;  // 长按已触发，松手不重复
+                ESP_LOGI("btn_progress", "左键长按已触发, 松手不重复");
+            } else {
+                ESP_LOGI("btn_progress", "左键短按: %lld ms", (long long)((now_us - custom_left_press_us) / 1000));
+                custom_emit_tap(&custom_left_action, &held);
+                tapped = true;
+            }
         }
         if (right_has_long && right_edge_up) {
-            const bool is_long = (now_us - custom_right_press_us) / 1000 >= (int64_t)custom_long_press_ms;
-            const custom_key_action_t *action = is_long ? &custom_right_long_action : &custom_right_action;
-            ESP_LOGI("btn_progress", "右键长按判定: %lld ms -> %s",
-                     (long long)((now_us - custom_right_press_us) / 1000), is_long ? "长按" : "短按");
-            custom_emit_tap(action, &held);
-            tapped = true;
+            if (custom_right_long_fired) {
+                custom_right_long_fired = false;
+                ESP_LOGI("btn_progress", "右键长按已触发, 松手不重复");
+            } else {
+                ESP_LOGI("btn_progress", "右键短按: %lld ms", (long long)((now_us - custom_right_press_us) / 1000));
+                custom_emit_tap(&custom_right_action, &held);
+                tapped = true;
+            }
         }
 
         // 点按已经把最终状态（其它键的按住状态）发出去了，无需重复发送
@@ -683,6 +709,54 @@ void btn_progress(keyboard_btn_report_t kbd_report)
     }
 }
 
+/*!< 长按到点触发检查，由周期任务（约 10ms）调用
+ *
+ *   方案A：配了长按的键被按住后，一旦按住时长达到阈值就立刻执行长按动作，
+ *   不需要等松手；触发过之后本次按住不再重复，松手时也不会再补发短按。
+ *   未配长按的键不参与这里的任何判定，行为与改动前完全一致。
+ */
+void btn_progress_tick(void)
+{
+    if (!custom_mapping_enabled) {
+        return;
+    }
+    if (!custom_left_down && !custom_right_down) {
+        return;
+    }
+
+    const bool left_has_long  = custom_action_has_long(&custom_left_long_action);
+    const bool right_has_long = custom_action_has_long(&custom_right_long_action);
+    if (!left_has_long && !right_has_long) {
+        return;
+    }
+
+    const int64_t now_us = esp_timer_get_time();
+
+    // 其它"未配长按且正被按住"的键，补发点按时要保持按住，避免被一起放开
+    custom_kbd_state_t held;
+    custom_state_clear(&held);
+    if (!left_has_long && custom_left_down && custom_left_action.type == CUSTOM_ACTION_KEY) {
+        custom_state_add(&held, custom_left_action.modifier, custom_left_action.keycode);
+    }
+    if (!right_has_long && custom_right_down && custom_right_action.type == CUSTOM_ACTION_KEY) {
+        custom_state_add(&held, custom_right_action.modifier, custom_right_action.keycode);
+    }
+
+    if (left_has_long && custom_left_down && !custom_left_long_fired &&
+        (now_us - custom_left_press_us) / 1000 >= (int64_t)custom_long_press_ms) {
+        ESP_LOGI("btn_progress", "左键长按触发: %lld ms", (long long)((now_us - custom_left_press_us) / 1000));
+        custom_emit_tap(&custom_left_long_action, &held);
+        custom_left_long_fired = true;
+    }
+
+    if (right_has_long && custom_right_down && !custom_right_long_fired &&
+        (now_us - custom_right_press_us) / 1000 >= (int64_t)custom_long_press_ms) {
+        ESP_LOGI("btn_progress", "右键长按触发: %lld ms", (long long)((now_us - custom_right_press_us) / 1000));
+        custom_emit_tap(&custom_right_long_action, &held);
+        custom_right_long_fired = true;
+    }
+}
+
 void light_progress(void)
 {
     rgb_matrix_task();
@@ -720,6 +794,10 @@ void btn_progress_enable_custom_mapping(bool enabled)
     custom_right_prev_pressed = false;
     custom_left_press_us      = 0;
     custom_right_press_us     = 0;
+    custom_left_down          = false;
+    custom_right_down         = false;
+    custom_left_long_fired    = false;
+    custom_right_long_fired   = false;
     ESP_LOGI("btn_progress", "自定义映射模式: %s", enabled ? "启用" : "禁用");
 }
 

@@ -1920,6 +1920,8 @@ static void light_progress_task(void *pvParameters)
         if (bsp_ws2812_is_enable()) {
             light_progress();
         }
+        /*!< 顺便作为 10ms 心跳：检查长按是否已到阈值（方案A：到点即触发） */
+        btn_progress_tick();
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
@@ -2437,6 +2439,9 @@ void app_main(void)
 
     /* ADC detection test */
     test_adc_detection(led_strip, handle);
+
+    /*!< 创建 HID 发送互斥锁：长按到点触发与按键回调都会发报告，需要串行化 */
+    btn_progress_init();
 
     bsp_rgb_matrix_init();
     bsp_ws2812_enable(true);
