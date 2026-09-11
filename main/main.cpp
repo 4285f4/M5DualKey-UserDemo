@@ -524,6 +524,26 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                             dualkey_config_save();
                         }
                     }
+                } else if (strcmp(type->valuestring, "set_key_led_effect") == 0) {
+                    // 按键灯效开关（rgb_matrix 自带的 typing heatmap 效果）
+                    // 直接操作 rgb_matrix 的 enable 位：rgb_matrix_enable()/disable() 内部会写 NVS 持久化，
+                    // 效果本身（typing_heatmap_anim.h）不做任何改动。
+                    cJSON *enabled = cJSON_GetObjectItem(json, "enabled");
+                    if (enabled && cJSON_IsBool(enabled)) {
+                        const bool en = cJSON_IsTrue(enabled);
+                        if (en) {
+                            rgb_matrix_enable();
+                        } else {
+                            rgb_matrix_disable();
+                        }
+                        ESP_LOGI(TAG, "按键灯效: %s", en ? "启用" : "禁用");
+                        // 若配置过自定义静态色：切换到 NONE 效果时会把灯清一次，这里补写回去
+                        if (g_device_status.left_key_color != 0x000000 || g_device_status.right_key_color != 0x000000) {
+                            vTaskDelay(60 / portTICK_PERIOD_MS);
+                            set_key_rgb_color(1, g_device_status.left_key_color);
+                            set_key_rgb_color(0, g_device_status.right_key_color);
+                        }
+                    }
                 } else if (strcmp(type->valuestring, "get_status") == 0) {
                     // 避免在 httpd 栈上构建 JSON
                     websocket_fd      = httpd_req_to_sockfd(req);
@@ -1299,6 +1319,8 @@ static void websocket_send_status(void)
     cJSON_AddNumberToObject(dualkey, "current_key_mapping", g_device_status.current_key_mapping);
     cJSON_AddBoolToObject(dualkey, "usb_mapping_enabled", g_usb_mapping_enabled);
     cJSON_AddBoolToObject(dualkey, "ble_mapping_enabled", g_ble_mapping_enabled);
+    // 按键灯效开关（读 rgb_matrix 的 enable 位；该值本身已由 rgb_matrix 持久化在 NVS）
+    cJSON_AddBoolToObject(dualkey, "key_led_effect_enabled", rgb_matrix_is_enabled());
 
     // 自定义映射状态
     cJSON_AddBoolToObject(dualkey, "custom_mapping_enabled", btn_progress_is_custom_mapping_enabled());

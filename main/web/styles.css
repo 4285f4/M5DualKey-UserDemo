@@ -273,6 +273,23 @@ body {
     transform: scale(1.1);
 }
 
+/* 按键灯效开关 */
+.key-led-effect {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #f3f4f6;
+}
+
+.key-led-effect .toggle-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: #6b7280;
+}
+
 /* 拨码开关样式 */
 .dip-switch-section {
     margin-top: 20px;
