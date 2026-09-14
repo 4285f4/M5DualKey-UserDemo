@@ -109,6 +109,14 @@ static void build_snapshot(void)
 
 void diag_power_flush(void)
 {
+    /*!< ⚠️ 关键守卫：只有本次上电真的跑过采样任务时才允许落盘。
+     *   WiFi 档不会调用 diag_power_start()，但 adc_switch_task 在跨档重启前会无条件
+     *   调用本函数 —— 若不做这个判断，它会用一份全 0 的静止快照（s_cyc_total 等
+     *   均为 0）覆盖掉刚在 BLE 档测到的有效数据，导致读数永远为 0。 */
+    if (!s_started) {
+        return;
+    }
+
     if (s_snapshot == NULL) {
         build_snapshot();
     }

@@ -487,6 +487,36 @@ static esp_err_t favicon_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/*!< 功耗诊断读数端点。
+ *   数据来源是 BLE 档运行期间由 diag_power 写进 NVS 的快照：BLE 档既没有网页、
+ *   也没有可用的 USB 控制台，只能先把数据存起来，等切到 WiFi 档再从这儿读回。
+ *   用 GET 而不是 WebSocket 命令，是因为它只需要一个纯文本快照，浏览器直接
+ *   打开 /diag 就能看。加 ?clear=1 可在读完后清空记录，方便开始下一轮采样。 */
+static esp_err_t diag_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+
+    /*!< 注意 httpd_req::uri 是定长数组而非指针，不能做 NULL 判断
+     *   （`req->uri != NULL` 恒为真，会被 -Werror=address 拦下）。 */
+    if (strstr(req->uri, "clear=1") != NULL) {
+        diag_power_clear();
+        return httpd_resp_send(req, "diag record cleared\n", HTTPD_RESP_USE_STRLEN);
+    }
+
+    char *txt = diag_power_load();
+    if (txt == NULL) {
+        return httpd_resp_send(req,
+                               "no diag record.\n"
+                               "Run the device in BLE position first, then flip the DIP switch to WiFi\n"
+                               "position (this restarts the chip and flushes the record), and reload here.\n",
+                               HTTPD_RESP_USE_STRLEN);
+    }
+
+    esp_err_t err = httpd_resp_send(req, txt, HTTPD_RESP_USE_STRLEN);
+    free(txt);
+    return err;
+}
+
 // WebSocket处理器
 static esp_err_t websocket_handler(httpd_req_t *req)
 {
@@ -1937,6 +1967,10 @@ static httpd_handle_t start_webserver(void)
         httpd_uri_t favicon_uri = {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler};
         httpd_register_uri_handler(server, &favicon_uri);
 
+        // 功耗诊断读数端点（数据由 BLE 档写入 NVS，此处只读回）
+        httpd_uri_t diag_uri = {.uri = "/diag", .method = HTTP_GET, .handler = diag_get_handler};
+        httpd_register_uri_handler(server, &diag_uri);
+
         web_assets_register_handlers(server);
 
         // 注册404错误处理器
@@ -2640,6 +2674,9 @@ void app_main(void)
         ESP_LOGI(TAG, "DIP switch is in BLE position: WiFi/HTTP disabled, BLE only");
         // 无网页服务时仍需刷新设备状态, 否则 BLE 电量上报不会触发
         xTaskCreate(device_status_task, "device_status_task", 4096, NULL, 5, NULL);
+        /*!< 只在 BLE 档启动功耗采样任务。WiFi 档故意不启动：它每 5min 会把快照
+         *   写进 NVS，若在 WiFi 档也跑，切回 BLE 档时就会把刚测到的数据覆盖掉。 */
+        diag_power_start();
     }
 
     /*!< USB-OTG / TinyUSB：蓝牙档下不启动。
