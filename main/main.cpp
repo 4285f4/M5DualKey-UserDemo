@@ -125,6 +125,9 @@ bool g_ble_adv_status      = false;  // 蓝牙广播状态: false=未广播, tru
  *   SETTLE: 关掉 light sleep 后等待 ADC 恢复的时间；COOLDOWN: 判定为误读后的静默期，
  *   避免每秒都重复走一遍"关休眠 -> 复读 -> 恢复休眠"。 */
 #define DIP_VERIFY_SETTLE_MS                  1200
+/*!< 关闭 light sleep 后，连续复读多少轮都指向候选档位才采信（每轮内部已 8 点平均）。 */
+#define DIP_VERIFY_ROUNDS                     5
+/*!< 判定被否决/熔断后的静默时长：这段时间内不再做档位判定。 */
 #define DIP_VERIFY_COOLDOWN_MS                30000
 
 /*!< 是否需要启用 WiFi(蓝牙档只开蓝牙) */
@@ -523,12 +526,15 @@ static esp_err_t diag_get_handler(httpd_req_t *req)
      *   （`req->uri != NULL` 恒为真，会被 -Werror=address 拦下）。 */
     if (strstr(req->uri, "clear=1") != NULL) {
         diag_power_clear();
+        diag_log_clear();
         return httpd_resp_send(req, "diag record cleared\n", HTTPD_RESP_USE_STRLEN);
     }
 
     char *txt  = diag_power_load();
     char *boot = diag_boot_load();
-    if (txt == NULL && boot == NULL) {
+    /*!< NVS 事件日志：唯一能扛住"OFF 档断电"的证据（RTC 内存会被清零）。 */
+    char *log = diag_log_load();
+    if (txt == NULL && boot == NULL && log == NULL) {
         return httpd_resp_send(req,
                                "no diag record.\n"
                                "Run the device in BLE position first, then flip the DIP switch to WiFi\n"
@@ -536,10 +542,20 @@ static esp_err_t diag_get_handler(httpd_req_t *req)
                                HTTPD_RESP_USE_STRLEN);
     }
 
-    /*!< 两段文本用 chunked 依次送出，省掉一次拼接与额外的堆拷贝。 */
+    /*!< 三段文本用 chunked 依次送出，省掉一次拼接与额外的堆拷贝。 */
     esp_err_t err = ESP_OK;
-    if (boot != NULL) {
-        err = httpd_resp_send_chunk(req, boot, HTTPD_RESP_USE_STRLEN);
+    if (log != NULL) {
+        err = httpd_resp_send_chunk(req, "=== event log (NVS, survives power cycle) ===\n", HTTPD_RESP_USE_STRLEN);
+        if (err == ESP_OK) {
+            err = httpd_resp_send_chunk(req, log, HTTPD_RESP_USE_STRLEN);
+        }
+    }
+    free(log);
+    if (err == ESP_OK && boot != NULL) {
+        err = httpd_resp_send_chunk(req, "\n", 1);
+        if (err == ESP_OK) {
+            err = httpd_resp_send_chunk(req, boot, HTTPD_RESP_USE_STRLEN);
+        }
         free(boot);
     }
     if (err == ESP_OK && txt != NULL) {
@@ -2152,9 +2168,10 @@ static void power_indicator_task(void *pvParameters)
  *   非蓝牙档（未开 light sleep）读数可信，直接采信。 */
 static bool dip_switch_verify_crossing(adc_oneshot_unit_handle_t handle, int prev_pos, int cand)
 {
-    if (!g_light_sleep_on) {
-        return true;
-    }
+    /*!< ⚠️ 这里特意不用 g_light_sleep_on 做前置判断：它在 adc_switch_task 创建之后
+     *   才被赋值（esp_pm_configure 在 app_main 很靠后），存在竞态 —— 一旦取到 false
+     *   就会直接放行一次误读重启。跨档判定本身极少发生，多花 ~2s 换取确定性是划算的。 */
+    const bool was_on = g_light_sleep_on;
 
     esp_pm_config_t pm_no_ls = {
         .max_freq_mhz       = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
@@ -2170,23 +2187,35 @@ static bool dip_switch_verify_crossing(adc_oneshot_unit_handle_t handle, int pre
     bsp_adc_switch_init();
     vTaskDelay(pdMS_TO_TICKS(200));
 
-    const int  recheck   = dip_switch_read_position(handle);
-    const bool confirmed = (recheck == cand);
+    /*!< 连续复读 DIP_VERIFY_ROUNDS 轮（每轮内部已经是 8 点平均），任何一轮不指向
+     *   候选档位就否决。单轮巧合容易骗过判定，连续多轮同时巧合的概率可以忽略。 */
+    int  recheck   = -1;
+    bool confirmed = true;
+    for (int i = 0; i < DIP_VERIFY_ROUNDS; i++) {
+        recheck = dip_switch_read_position(handle);
+        if (recheck != cand) {
+            confirmed = false;
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
     diag_boot_note_verify(prev_pos, cand, recheck, confirmed);
 
-    ESP_LOGW(TAG, "cross-position verify: cand=%d recheck=%d -> %s (pm_off=%s)", cand, recheck,
-             confirmed ? "CONFIRMED" : "FAKE(misread)", esp_err_to_name(off_ret));
+    ESP_LOGW(TAG, "cross-position verify: cand=%d recheck=%d -> %s (pm_off=%s, was_on=%d)", cand, recheck,
+             confirmed ? "CONFIRMED" : "FAKE(misread)", esp_err_to_name(off_ret), (int)was_on);
 
     if (confirmed) {
         return true; /*!< 即将重启，无需恢复休眠设置 */
     }
 
-    esp_pm_config_t pm_ls = {
-        .max_freq_mhz       = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-        .min_freq_mhz       = CONFIG_XTAL_FREQ,
-        .light_sleep_enable = true,
-    };
-    esp_pm_configure(&pm_ls);
+    if (was_on) {
+        esp_pm_config_t pm_ls = {
+            .max_freq_mhz       = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+            .min_freq_mhz       = CONFIG_XTAL_FREQ,
+            .light_sleep_enable = true,
+        };
+        esp_pm_configure(&pm_ls);
+    }
     return false;
 }
 
@@ -2249,8 +2278,22 @@ void adc_switch_task(void *pvParameters)
                 /*!< 取证：不论最终是否重启，先把这次判定背后的原始样本存进 RTC 内存。 */
                 diag_boot_note_dip_sample((int)r0, (int)r1, adc_value[0], adc_value[1], last_pos, new_pos, hits);
 #if DIP_SWITCH_RESTART_ON_BOUNDARY_CHANGE
-                /*!< WiFi 是否启用由开机时决定, 跨越蓝牙档/非蓝牙档边界需重启才能生效 */
-                if (dip_switch_wifi_enabled(last_pos) != dip_switch_wifi_enabled(switch_pos)) {
+                /*!< ⚠️ 读到 CENTER 一律忽略，绝不据此重启。
+                 *
+                 *   CENTER 是"两路 ADC 都没有超过阈值"反推出来的（absence 证据），
+                 *   而任何 ADC 失效 —— 通道配置被休眠清掉、采样发生在唤醒瞬间等 ——
+                 *   都会得到这个结果。更要命的是：**中间 OFF 档会切断供电**。实测用户
+                 *   从 BLE 档拨到 WiFi 档后，本次启动的 reset reason 是 POWERON 而不是
+                 *   SW，说明拨档过程必然经历一次真实断电重启 —— 于是运行期读到 CENTER
+                 *   永远只可能是误读（或拨档途中一闪而过，反正马上就会断电）。
+                 *   据此重启毫无意义，只会把一次 ADC 抽风放大成"每秒闪一次开机灯效"的
+                 *   重启循环（2026-09-14 实机现象）。 */
+                if (new_pos == DIP_SWITCH_POS_CENTER) {
+                    ESP_LOGW(TAG, "DIP reads CENTER (adc raw %d/%d) - absence-based, ignored", adc_value[0],
+                             adc_value[1]);
+                    switch_pos        = last_pos;
+                    cooldown_until_ms = (esp_timer_get_time() / 1000) + DIP_VERIFY_COOLDOWN_MS;
+                } else if (dip_switch_wifi_enabled(last_pos) != dip_switch_wifi_enabled(switch_pos)) {
                     if (!dip_switch_verify_crossing(handle, last_pos, new_pos)) {
                         /*!< 复读推翻了这次判定 -> 判为休眠误读，撤销并静默一段时间。 */
                         ESP_LOGW(TAG, "DIP change rejected after re-verify (light-sleep misread), cooldown %d s",
@@ -2739,8 +2782,14 @@ void app_main(void)
 
     /*!< Read the DIP switch before wireless init: BLE position runs BLE only */
     switch_pos = dip_switch_read_position(handle);
-    /*!< 取证：记录本次启动原因与开机判定档位（RTC 内存，跨档软复位后仍可读回）。 */
-    diag_boot_note_boot(switch_pos);
+    /*!< 取证：记录本次启动原因、开机判定档位，以及**开机瞬间的原始 ADC 采样**。
+     *   此刻 light sleep 尚未开启，这份读数是"可信基准"，用于和运行期误判时的 raw
+     *   值对比：都掉到 0 = 通道失效；只是跌到阈值以下 = 读数漂移。
+     *   同时会落一份到 NVS —— 中间 OFF 档会切断供电，RTC 内存扛不住。 */
+    int boot_ble_raw = -1, boot_wifi_raw = -1;
+    adc_oneshot_read(handle, KBD_ADC_SWITCH_BLE_CHAN, &boot_ble_raw);
+    adc_oneshot_read(handle, KBD_ADC_SWITCH_RAINMAKER_CHAN, &boot_wifi_raw);
+    diag_boot_note_boot(switch_pos, boot_ble_raw, boot_wifi_raw);
     /*!< 蓝牙档 = 纯蓝牙翻页器，关掉一切用不上的常驻负载。
      *   开机时判定一次即可：跨越蓝牙档/非蓝牙档边界会 esp_restart()（见 adc_switch_task）。 */
     const bool ble_only_mode = !dip_switch_wifi_enabled(switch_pos);

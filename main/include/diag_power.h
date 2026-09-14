@@ -43,8 +43,19 @@ void diag_power_clear(void);
  *                                    （≈0，pad/通道失效）还是"读偏了"（阈值问题）。
  * ------------------------------------------------------------------------- */
 
-/** 记录本次启动（reset reason + 开机判定档位）。在 app_main 判完档位后调用。 */
-void diag_boot_note_boot(int boot_pos);
+/**
+ * @brief 记录本次启动（reset reason + 开机判定档位 + 开机瞬间的原始 ADC 采样）。
+ *
+ * ⚠️ 为什么必须带上开机 ADC 原始值：开机时 light sleep 尚未开启，此时的读数
+ *    （8 点平均后的通道原始值）是"可信基准"。运行期出现档位误判时，把它与
+ *    dip_v0/dip_v1 对比，就能一眼区分是"通道整个失效（都掉到 0）"还是
+ *    "读数漂移（只是跌到阈值以下）"。
+ *
+ * @param boot_pos      开机判定的档位 (0=center 1=wifi 2=ble)
+ * @param boot_ble_raw  BLE 通道原始值 (ADC raw, -1 = 读取失败)
+ * @param boot_wifi_raw WiFi 通道原始值
+ */
+void diag_boot_note_boot(int boot_pos, int boot_ble_raw, int boot_wifi_raw);
 
 /** 刷新存活时长（建议每秒一次）。崩溃重启后可据此推算崩溃发生在开机后多久。 */
 void diag_boot_note_uptime_ms(int64_t ms);
@@ -72,3 +83,24 @@ void diag_boot_note_storm_suppressed(void);
 
 /** 把取证记录格式化成文本（堆字符串，调用方 free()）。 */
 char *diag_boot_load(void);
+
+/* ---------------------------------------------------------------------------
+ * 事件日志（NVS，扛得住断电）
+ *
+ * 为什么不能只用 RTC 内存：**中间 OFF 档会切断供电** —— 实测用户从 BLE 档拨到
+ * WiFi 档后，本次启动的 reset reason 是 POWERON 而不是 SW，说明拨档过程必然
+ * 经过一次真实断电，RTC_DATA_ATTR 里的取证记录会被整块清零（实测 boot_seq=1、
+ * 所有 ADC 样本为 -1）。所以关键事件必须落到 flash。
+ *
+ * 写入策略：单条字符串、每次追加一行、超出上限就丢弃最旧的行；同时限制单次
+ * 开机内的追加次数（重启风暴时每轮都会追加，不能让 flash 被反复擦写）。
+ * ------------------------------------------------------------------------- */
+
+/** 追加一行事件到 NVS 日志（printf 风格）。重启风暴期间有次数上限，超出即静默丢弃。 */
+void diag_log_event(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+/** 读回 NVS 事件日志（堆字符串，调用方 free()；无记录时返回 NULL）。 */
+char *diag_log_load(void);
+
+/** 清空 NVS 事件日志。 */
+void diag_log_clear(void);

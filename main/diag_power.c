@@ -9,6 +9,7 @@
  *   - esp_pm 的电源模式分布（Mode: SLEEP/APB_MIN/...）是自开机起的累计统计，
  *     所以低频抓取不会漏掉历史信息。
  */
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -168,6 +169,119 @@ void diag_power_clear(void)
     nvs_close(h);
 }
 
+/* ===========================================================================
+ * 事件日志（NVS）：扛得住 OFF 档断电
+ * =========================================================================== */
+
+#define LOG_KEY        "log"
+/*!< 单条字符串的上限。NVS 单个 string value 上限是 4000 字节，留足余量。 */
+#define LOG_MAX_CHARS  1500
+/*!< 单次开机内最多追加多少行。重启风暴时每轮会追加 3~4 行，设上限是为了
+ *   不让 flash 在一个诊断周期里被反复擦写（NVS 每次 set_str 都要写一整条）。 */
+#define LOG_MAX_APPENDS 60
+
+static int s_log_appends = 0; /*!< 本次开机已追加行数（每次开机清零） */
+
+void diag_log_event(const char *fmt, ...)
+{
+    if (s_log_appends >= LOG_MAX_APPENDS) {
+        return;
+    }
+    s_log_appends++;
+
+    char line[220];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+
+    size_t old_len = 0;
+    char  *buf     = NULL;
+    if (nvs_get_str(h, LOG_KEY, NULL, &old_len) == ESP_OK && old_len > 1) {
+        buf = malloc(old_len);
+        if (buf != NULL && nvs_get_str(h, LOG_KEY, buf, &old_len) != ESP_OK) {
+            free(buf);
+            buf = NULL;
+        }
+    }
+    if (buf == NULL) {
+        buf     = malloc(1);
+        old_len = 0;
+    }
+    /*!< 统一按最大容量重新分配，后面的拼接就不必再关心旧长度，
+     *   也不会出现"截断后剩余空间算错"的越界。 */
+    char *bigger = realloc(buf, LOG_MAX_CHARS + 1);
+    if (bigger == NULL) {
+        free(buf);
+        nvs_close(h);
+        return;
+    }
+    buf = bigger;
+    if (old_len == 0) {
+        buf[0] = '\0'; /*!< 新建（或旧值无效）：从空串开始 */
+    }
+
+    const size_t line_len = strlen(line);
+    /*!< 日志满了就从最前面整行地丢（可能需要丢多行）—— 保证尾部最新事件完整。 */
+    while (strlen(buf) + line_len + 2 > LOG_MAX_CHARS) {
+        char *nl = strchr(buf, '\n');
+        if (nl == NULL) {
+            buf[0] = '\0';
+            break;
+        }
+        const size_t drop = (size_t)(nl - buf) + 1;
+        memmove(buf, buf + drop, strlen(buf) - drop + 1);
+    }
+
+    if (line_len + 2 <= LOG_MAX_CHARS) {
+        const size_t used = strlen(buf);
+        memcpy(buf + used, line, line_len);
+        buf[used + line_len]     = '\n';
+        buf[used + line_len + 1] = '\0';
+        if (nvs_set_str(h, LOG_KEY, buf) == ESP_OK) {
+            nvs_commit(h);
+        }
+    }
+    nvs_close(h);
+    free(buf);
+}
+
+char *diag_log_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return NULL;
+    }
+
+    size_t len = 0;
+    char  *buf = NULL;
+    if (nvs_get_str(h, LOG_KEY, NULL, &len) == ESP_OK && len > 0) {
+        buf = malloc(len);
+        if (buf != NULL && nvs_get_str(h, LOG_KEY, buf, &len) != ESP_OK) {
+            free(buf);
+            buf = NULL;
+        }
+    }
+    nvs_close(h);
+    return buf;
+}
+
+void diag_log_clear(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    nvs_erase_key(h, LOG_KEY);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
 static void diag_task(void *arg)
 {
     (void)arg;
@@ -229,6 +343,8 @@ typedef struct {
     uint32_t boot_seq;          /*!< 上电以来第几次启动 */
     int      reset_reason;      /*!< 本次启动的原因 (= 上一次重启的类型) */
     int      boot_pos;          /*!< 本次启动判定的档位 */
+    int      boot_ble_raw;      /*!< 开机瞬间 BLE 通道原始值（light sleep 未开，可信基准） */
+    int      boot_wifi_raw;     /*!< 开机瞬间 WiFi 通道原始值 */
     int64_t  uptime_ms;         /*!< 本次运行已存活时长，由 tick 刷新 */
     int64_t  last_sw_uptime_ms; /*!< 上一次软复位前存活了多久（0 = 尚无记录） */
     /* 最近一次运行期档位判定背后的原始样本 */
@@ -255,19 +371,29 @@ static void boot_rec_ensure(void)
     s_boot_rec.magic        = BOOT_REC_MAGIC;
     s_boot_rec.reset_reason = -1;
     s_boot_rec.boot_pos     = -1;
+    s_boot_rec.boot_ble_raw = s_boot_rec.boot_wifi_raw = -1;
     s_boot_rec.dip_r0 = s_boot_rec.dip_r1 = -1;
     s_boot_rec.dip_v0 = s_boot_rec.dip_v1 = -1;
     s_boot_rec.dip_from = s_boot_rec.dip_to = -1;
     s_boot_rec.last_recheck = -1;
 }
 
-void diag_boot_note_boot(int boot_pos)
+void diag_boot_note_boot(int boot_pos, int boot_ble_raw, int boot_wifi_raw)
 {
     boot_rec_ensure();
     s_boot_rec.boot_seq++;
     s_boot_rec.reset_reason = (int)esp_reset_reason();
     s_boot_rec.boot_pos     = boot_pos;
+    s_boot_rec.boot_ble_raw = boot_ble_raw;
+    s_boot_rec.boot_wifi_raw = boot_wifi_raw;
     s_boot_rec.uptime_ms    = 0;
+
+    /*!< 新的一次开机：重置本次的追加配额，并把启动事件落 NVS。
+     *   RTC 记录会被 OFF 档断电清零，所以这一行是唯一能跨断电的证据。 */
+    s_log_appends = 0;
+    diag_log_event("BOOT#%u reason=%d pos=%d raw(ble=%d wifi=%d) prev_sw_up=%lldms", (unsigned)s_boot_rec.boot_seq,
+                   s_boot_rec.reset_reason, boot_pos, boot_ble_raw, boot_wifi_raw,
+                   (long long)s_boot_rec.last_sw_uptime_ms);
 }
 
 void diag_boot_note_uptime_ms(int64_t ms)
@@ -287,6 +413,9 @@ void diag_boot_note_dip_sample(int r0, int r1, int v0, int v1, int from, int to,
     s_boot_rec.dip_to    = to;
     s_boot_rec.dip_hits  = hits;
     s_boot_rec.dip_at_ms = s_boot_rec.uptime_ms;
+
+    diag_log_event("DECIDE@%lldms %d->%d hits=%d rc(%d,%d) raw(%d,%d)", (long long)s_boot_rec.uptime_ms, from, to,
+                   hits, r0, r1, v0, v1);
 }
 
 void diag_boot_note_verify(int from, int to, int recheck, bool confirmed)
@@ -299,22 +428,26 @@ void diag_boot_note_verify(int from, int to, int recheck, bool confirmed)
     if (!confirmed) {
         s_boot_rec.verify_rejected++;
     }
+
+    diag_log_event("VERIFY cand=%d recheck=%d boot_raw(ble=%d wifi=%d) -> %s", to, recheck,
+                   s_boot_rec.boot_ble_raw, s_boot_rec.boot_wifi_raw, confirmed ? "CONFIRMED" : "FAKE");
 }
 
 void diag_boot_note_confirmed_restart(void)
 {
     boot_rec_ensure();
     s_boot_rec.last_sw_uptime_ms = s_boot_rec.uptime_ms;
+    diag_log_event("RESTART@%lldms (cross-position, restarting to apply)", (long long)s_boot_rec.uptime_ms);
 }
 
 bool diag_boot_is_restart_storm(void)
 {
     boot_rec_ensure();
-    /*!< 只有"上一次也是软件复位（= 我们自己 esp_restart 的）"才可能是循环。 */
-    if (s_boot_rec.reset_reason != (int)ESP_RST_SW) {
-        return false;
-    }
-    /*!< 0 = 没有记录（例如刚上电），不能据此判风暴。 */
+    /*!< 判据只用"上一次是不是我们自己重启的、且活得极短"。
+     *   ⚠️ 特意不要求 reset reason == ESP_RST_SW：实测风暴期间拿到过非 SW 的
+     *   复位原因，若把它写进前置条件，熔断就永远不会生效（这正是第一版取证固件
+     *   没能兜住重启循环的原因）。last_sw_uptime_ms 只有 diag_boot_note_confirmed_restart()
+     *   会写，而 RTC 内存被断电清零，所以"非 0 且很短"就足以认定循环。 */
     if (s_boot_rec.last_sw_uptime_ms <= 0) {
         return false;
     }
@@ -325,6 +458,8 @@ void diag_boot_note_storm_suppressed(void)
 {
     boot_rec_ensure();
     s_boot_rec.storm_suppressed++;
+    diag_log_event("FUSE   storm suppressed (reason=%d prev_up=%lldms)", s_boot_rec.reset_reason,
+                   (long long)s_boot_rec.last_sw_uptime_ms);
     /*!< 清掉短命标记，避免把之后正常的用户拨档（此时 uptime 已经很长）也拦下来。 */
     s_boot_rec.last_sw_uptime_ms = 0;
 }
@@ -375,6 +510,8 @@ char *diag_boot_load(void)
     fprintf(fo, "reset reason   : %d (%s)   <- why THIS boot started\n", s_boot_rec.reset_reason,
             reset_reason_str(s_boot_rec.reset_reason));
     fprintf(fo, "boot dip pos   : %d   (0=center 1=wifi 2=ble)\n", s_boot_rec.boot_pos);
+    fprintf(fo, "boot adc raw   : ch_ble=%d ch_wifi=%d   <- taken at boot, light sleep OFF (trustworthy baseline)\n",
+            s_boot_rec.boot_ble_raw, s_boot_rec.boot_wifi_raw);
     fprintf(fo, "uptime now     : %lld s\n", (long long)(s_boot_rec.uptime_ms / 1000));
     fprintf(fo, "prev sw uptime : %lld ms   (<= %d ms => restart storm)\n", (long long)s_boot_rec.last_sw_uptime_ms,
             BOOT_STORM_UPTIME_MS);
