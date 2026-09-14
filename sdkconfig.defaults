@@ -16,6 +16,15 @@ CONFIG_ESP_PHY_RF_CAL_NONE=y
 CONFIG_PM_ENABLE=y
 CONFIG_PM_DFS_INIT_AUTO=y
 
+# --- 临时诊断（定位 BLE 档功耗用，定位完成后应移除）--------------------------
+# PM_PROFILING 让 esp_pm_dump_locks 打印每把锁的持有次数/时长，以及各电源模式
+# 的时间占比；ESP_TIMER_PROFILING 让 esp_timer_dump 打印定时器名字与触发次数。
+# 这两项是唯一能回答"CPU 到底降频了没有 / 谁在挡 / 谁在周期唤醒"的手段，
+# 开销很小（PM_PROFILING 只在锁 acquire/release 时取时间戳）。
+# 观测通道见 main/diag_power.c：BLE 档采样落 NVS，切 WiFi 档后 GET /diag 读回。
+CONFIG_PM_PROFILING=y
+CONFIG_ESP_TIMER_PROFILING=y
+
 # --- 功耗优化：BLE 控制器 modem sleep（BLE 档静置电流的主开关）---------------
 # 开启后控制器在两次 BLE 事件之间休眠，仅靠低功耗时钟维持蓝牙基准时钟；
 # 关闭时射频前端与 PLL 全程带电（实测静置 66~95mA，正常 BLE HID 应 2~4mA）。

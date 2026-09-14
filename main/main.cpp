@@ -22,6 +22,7 @@ extern "C" {
 #include "iot_button.h"
 #include "tinyusb_cdc.h"
 #include "adc_detect.h"
+#include "diag_power.h"
 #include "driver/gpio.h"
 #include "chain_bus.h"
 #include "esp_wifi.h"
@@ -30,6 +31,7 @@ extern "C" {
 #include "esp_http_server.h"
 #include "lwip/inet.h"
 #include "string.h"
+#include <stdlib.h>
 #include "esp_mac.h"
 #include "cJSON.h"
 #include "esp_crc.h"
@@ -2092,6 +2094,9 @@ void adc_switch_task(void *pvParameters)
             /*!< WiFi 是否启用由开机时决定, 跨越蓝牙档/非蓝牙档边界需重启才能生效 */
             if (dip_switch_wifi_enabled(last_pos) != dip_switch_wifi_enabled(switch_pos)) {
                 ESP_LOGW(TAG, "DIP switch crossed BLE/WiFi boundary, restarting to apply");
+                /*!< 重启会清空 RAM 里的统计，跨档前必须先把诊断数据落盘到 NVS，
+                 *   否则刚从 BLE 档跑出来的那一段数据就白测了。 */
+                diag_power_flush();
                 vTaskDelay(pdMS_TO_TICKS(100));
                 esp_restart();
             }
