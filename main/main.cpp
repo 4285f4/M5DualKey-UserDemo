@@ -8,6 +8,7 @@ extern "C" {
 
 #include "esp_log.h"
 #include "esp_pm.h"
+#include "esp_sleep.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/timers.h"
@@ -103,6 +104,19 @@ bool g_ble_adv_status      = false;  // 蓝牙广播状态: false=未广播, tru
 #define DIP_SWITCH_ADC_THRESHOLD              2000
 #define DIP_SWITCH_READ_SAMPLE_NUM            8
 #define DIP_SWITCH_RESTART_ON_BOUNDARY_CHANGE 1
+
+/*!< 运行期档位判定的去抖次数（配合 adc_switch_task 的 1s 周期）。
+ *
+ *   为什么必须去抖（2026-09-13 实锤的"电池态周期性重启"真凶）：
+ *   light sleep 生效后 adc_oneshot_read() 会偶发失败/给出无意义值，而原实现
+ *   ① 不查返回值、② 单次样本即提交 switch_pos。读失败时 adc_value 保持上一次的
+ *   值或 0，BLE 档(2) 会被判成中间档(0)，于是跨越 dip_switch_wifi_enabled 的边界
+ *   → 执行 esp_restart()（rst=3 软件复位、不写 coredump）→ 表现为"每隔几分钟自己
+ *   重启、闪一次开机灯效"。
+ *
+ *   对策：① 读取失败的样本直接丢弃；② 新档位需连续 N 次一致才提交。
+ *   代价：真实拨码变化需要约 N 秒才生效（拨档本来就要跨档重启，用户可接受）。 */
+#define DIP_SWITCH_DEBOUNCE_HITS              3
 
 /*!< 是否需要启用 WiFi(蓝牙档只开蓝牙) */
 static bool dip_switch_wifi_enabled(int pos)
@@ -2028,11 +2042,15 @@ static void keyboard_cb(keyboard_btn_handle_t kbd_handle, keyboard_btn_report_t 
     iot_button_timer_enable(kbd_report.key_pressed_num > 0);
 }
 
-/*!< 灯效任务心跳：空闲 50ms / 有键按下 10ms。
+/*!< 灯效任务心跳：空闲 200ms / 有键按下 10ms。
  *   原为固定 10ms 无条件唤醒，会持续把 CPU 从 light sleep 拉起来。
- *   按键响应不依赖本任务轮询（keyboard_cb 由中断边沿驱动），所以空闲期拉长
- *   不影响手感；有键按下时回到 10ms，保证长按到点判定精度与热力图淡出效果。 */
-#define LIGHT_TASK_PERIOD_IDLE_MS 50
+ *   按键上报不依赖本任务轮询（keyboard_cb 由 GPIO 中断边沿驱动，s_keys_down 在
+ *   回调里同步更新），所以空闲期拉长不影响按键手感；空闲 200ms 只是让长按"到点
+ *   触发"最多晚一个心跳（长按阈值本身是数百 ms 级，长度按绝对时间戳计算，不会
+ *   累积误差）；有键按下时立刻回到 10ms，保证长按判定精度与热力图淡出效果。
+ *   在 light sleep 下本任务的每个心跳周期都对应一次唤醒，200ms 把这里的唤醒
+ *   频率从 20/s 降到 5/s。 */
+#define LIGHT_TASK_PERIOD_IDLE_MS 200
 #define LIGHT_TASK_PERIOD_ACTIVE_MS 10
 
 static void light_progress_task(void *pvParameters)
@@ -2093,7 +2111,9 @@ static void power_indicator_task(void *pvParameters)
             vTaskDelay(pdMS_TO_TICKS(20));
             refresh_key_colors_from_status();
         } else {
-            vTaskDelay(pdMS_TO_TICKS(300));
+            /*!< 电池态空闲：只等 USB 插入事件，1s 足够（插线后最多 1s 内点亮电量指示）。
+             *   原为 300ms，在 light sleep 下等于每秒多 2.3 次无用唤醒。 */
+            vTaskDelay(pdMS_TO_TICKS(1000));
         }
     }
 }
@@ -2106,36 +2126,62 @@ void adc_switch_task(void *pvParameters)
     btn_report_type_t report_type    = sys_param->report_type;
     report_type                      = ALL_REPORT;  // 默认打印按键 不report kb功能
     int last_pos                     = switch_pos;  // 开机时已判定, 避免上电误判为档位变化
+    int cand_pos                     = -1;          /*!< 去抖：候选新档位 */
+    int cand_hits                    = 0;           /*!< 候选档位连续命中次数 */
+
     while (1) {
-        adc_oneshot_read(handle, KBD_ADC_SWITCH_BLE_CHAN, &adc_value[0]);
-        adc_oneshot_read(handle, KBD_ADC_SWITCH_RAINMAKER_CHAN, &adc_value[1]);
+        esp_err_t r0 = adc_oneshot_read(handle, KBD_ADC_SWITCH_BLE_CHAN, &adc_value[0]);
+        esp_err_t r1 = adc_oneshot_read(handle, KBD_ADC_SWITCH_RAINMAKER_CHAN, &adc_value[1]);
         g_device_status.switch_1_value = adc_value[0];
         g_device_status.switch_2_value = adc_value[1];
-        if (adc_value[0] > DIP_SWITCH_ADC_THRESHOLD) {
-            // report_type = BLE_HID_REPORT;
-            switch_pos = DIP_SWITCH_POS_BLE;
-        } else if (adc_value[1] > DIP_SWITCH_ADC_THRESHOLD) {
-            // report_type = USB_CDC_REPORT;
-            switch_pos = DIP_SWITCH_POS_WIFI;
-        } else {
-            // report_type = TINYUSB_HID_REPORT;
-            switch_pos = DIP_SWITCH_POS_CENTER;
+
+        /*!< 读取失败的样本一律丢弃：light sleep 下 ADC 偶发失败，而失败时 adc_value
+         *   会保留上一次的值，若照旧参与判档就会把 BLE 档误判成中间档并触发重启。
+         *   详见 DIP_SWITCH_DEBOUNCE_HITS 的说明。 */
+        int new_pos = -1;
+        if (r0 == ESP_OK && r1 == ESP_OK) {
+            if (adc_value[0] > DIP_SWITCH_ADC_THRESHOLD) {
+                // report_type = BLE_HID_REPORT;
+                new_pos = DIP_SWITCH_POS_BLE;
+            } else if (adc_value[1] > DIP_SWITCH_ADC_THRESHOLD) {
+                // report_type = USB_CDC_REPORT;
+                new_pos = DIP_SWITCH_POS_WIFI;
+            } else {
+                // report_type = TINYUSB_HID_REPORT;
+                new_pos = DIP_SWITCH_POS_CENTER;
+            }
         }
 
-        if (switch_pos != last_pos) {
-            ESP_LOGI(TAG, "DIP switch position changed: %d -> %d", last_pos, switch_pos);
-#if DIP_SWITCH_RESTART_ON_BOUNDARY_CHANGE
-            /*!< WiFi 是否启用由开机时决定, 跨越蓝牙档/非蓝牙档边界需重启才能生效 */
-            if (dip_switch_wifi_enabled(last_pos) != dip_switch_wifi_enabled(switch_pos)) {
-                ESP_LOGW(TAG, "DIP switch crossed BLE/WiFi boundary, restarting to apply");
-                /*!< 重启会清空 RAM 里的统计，跨档前必须先把诊断数据落盘到 NVS，
-                 *   否则刚从 BLE 档跑出来的那一段数据就白测了。 */
-                diag_power_flush();
-                vTaskDelay(pdMS_TO_TICKS(100));
-                esp_restart();
+        if (new_pos >= 0) {
+            if (new_pos == last_pos) {
+                cand_pos  = -1;
+                cand_hits = 0;
+            } else if (new_pos == cand_pos) {
+                cand_hits++;
+            } else {
+                cand_pos  = new_pos;
+                cand_hits = 1;
             }
+
+            if (cand_hits >= DIP_SWITCH_DEBOUNCE_HITS) {
+                cand_pos   = -1;
+                cand_hits  = 0;
+                switch_pos = new_pos;
+
+                ESP_LOGI(TAG, "DIP switch position changed: %d -> %d", last_pos, switch_pos);
+#if DIP_SWITCH_RESTART_ON_BOUNDARY_CHANGE
+                /*!< WiFi 是否启用由开机时决定, 跨越蓝牙档/非蓝牙档边界需重启才能生效 */
+                if (dip_switch_wifi_enabled(last_pos) != dip_switch_wifi_enabled(switch_pos)) {
+                    ESP_LOGW(TAG, "DIP switch crossed BLE/WiFi boundary, restarting to apply");
+                    /*!< 重启会清空 RAM 里的统计，跨档前必须先把诊断数据落盘到 NVS，
+                     *   否则刚从 BLE 档跑出来的那一段数据就白测了。 */
+                    diag_power_flush();
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                    esp_restart();
+                }
 #endif
-            last_pos = switch_pos;
+                last_pos = switch_pos;
+            }
         }
 
         // ESP_LOGI(TAG, "adc_value[0]: %d, adc_value[1]: %d", g_device_status.switch_1_value,
@@ -2708,6 +2754,43 @@ void app_main(void)
 
     /*!< 充电电量指示（低亮度常亮）：放在配置加载之后，确保静态色已就绪 */
     xTaskCreate(power_indicator_task, "power_indicator_task", 3072, NULL, 4, NULL);
+
+    /*!< 阶段 3：只对蓝牙档开启自动 light sleep —— 这是把静置电流从 ~45mA 压到个位数
+     *   的唯一途径。诊断实测（BLE 连接态静置 119min）：有效 CPU 49.5MHz、各 PM 锁
+     *   均正常、而 SLEEP 占比 0%。即硬件没毛病、任务也没乱醒，45~50mA 就是
+     *   "CPU 常驻 40MHz + BLE 维持"这条基线的代价 —— 数字域从头到尾没停过。
+     *
+     *   为什么必须由应用层补这一刀：IDF 的 CONFIG_PM_DFS_INIT_AUTO 确实会自动调用
+     *   esp_pm_configure()，但它在构造 esp_pm_config_t 时没有填 light_sleep_enable
+     *   （零值 = false），应用层也从未主动调用过它。结果是"DFS 开着、却永远不进休眠"。
+     *
+     *   Kconfig 侧无需改动，本就已就绪：
+     *     - BT_CTRL_MODEM_SLEEP + MODE_1：射频每周期入睡，并释放 bt 的 APB 锁
+     *       （该锁若不释放，pm_impl.c:554 会把最低可达模式卡在 APB_MAX）；
+     *     - PM_POWER_DOWN_CPU_IN_LIGHT_SLEEP=y：休眠时 CPU 断电，省约 650uA；
+     *     - PM_SLP_DISABLE_GPIO=y：休眠时隔离全部 GPIO，省 200~300uA。
+     *       用作唤醒的键脚不会被它切断 —— esp_driver_gpio/gpio.c:672-674 在
+     *       gpio_wakeup_enable() 内部会自动 gpio_sleep_sel_dis() 予以豁免。
+     *
+     *   唤醒源：两个键脚的低电平唤醒已由 keyboard_button 组件在 bsp_keyboard_init()
+     *   里注册（其内部把 gpio_mode 显式设为 INPUT、enable_power_save 透传 true）；
+     *   这里再补一次 esp_sleep_enable_gpio_wakeup() 把该唤醒源挂上。
+     *   定时唤醒由 tickless idle 按"下一个到期事件"自动设置，无需手工干预。
+     *
+     *   只对蓝牙档开启：WiFi 档要保证网页/WebSocket 实时响应，而且读诊断数据也在
+     *   那一档，不适合引入休眠。 */
+    if (ble_only_mode) {
+        const esp_err_t gpio_wk = esp_sleep_enable_gpio_wakeup();
+        esp_pm_config_t pm_cfg  = {
+            .max_freq_mhz       = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+            .min_freq_mhz       = CONFIG_XTAL_FREQ, /*!< S3 最低档即晶振 40MHz */
+            .light_sleep_enable = true,
+        };
+        const esp_err_t pm_ret = esp_pm_configure(&pm_cfg);
+        ESP_LOGI(TAG, "BLE-only: auto light sleep %s (pm=%s gpio_wakeup=%s, DFS %d/%d MHz)",
+                 (pm_ret == ESP_OK) ? "ENABLED" : "FAILED", esp_err_to_name(pm_ret), esp_err_to_name(gpio_wk),
+                 pm_cfg.max_freq_mhz, pm_cfg.min_freq_mhz);
+    }
 
     static uint8_t last_battery_percentage = 255;
     while (1) {
