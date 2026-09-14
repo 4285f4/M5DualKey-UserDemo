@@ -15,6 +15,40 @@ CONFIG_RTC_CLK_CAL_CYCLES=1024
 CONFIG_ESP_PHY_RF_CAL_NONE=y
 CONFIG_PM_ENABLE=y
 CONFIG_PM_DFS_INIT_AUTO=y
+
+# --- 功耗优化：BLE 控制器 modem sleep（BLE 档静置电流的主开关）---------------
+# 开启后控制器在两次 BLE 事件之间休眠，仅靠低功耗时钟维持蓝牙基准时钟；
+# 关闭时射频前端与 PLL 全程带电（实测静置 66~95mA，正常 BLE HID 应 2~4mA）。
+# 更关键的是，这个宏在 ESP32-S3 上同时控制三件事（源码：components/bt/
+# controller/esp32c3/bt.c —— 注意 esp32s3/Kconfig.in 只是 source 它，
+# controller/esp32/bt.c 是初代 ESP32 双模控制器，S3 不编译）：
+#   ① bt.c:2097  s_lp_cntl.enable = (sleep_mode == ESP_BT_SLEEP_MODE_1)
+#                -> 为真才调 btdm_controller_enable_sleep(true)，即射频入睡开关；
+#   ② bt.c:1740  sleep_mode != MODE_1 时置 s_lp_cntl.no_light_sleep = 1，
+#                bt.c:1774 据此创建名为 "btLS" 的 ESP_PM_NO_LIGHT_SLEEP 锁；
+#   ③ bt.c:1781  无条件创建 "bt" APB_FREQ_MAX 锁，而 pm_impl.c:554 规定持有
+#                APB_FREQ_MAX 时最低只能到 PM_MODE_APB_MAX、进不了 light sleep。
+#                这把锁只在 MODE_1 分支里释放（bt.c:1200），唤醒时重取（:1215）。
+# => 不配 MODE_1，前两层漏电都无解；配了则三件事一起解决。
+CONFIG_BT_CTRL_MODEM_SLEEP=y
+CONFIG_BT_CTRL_MODEM_SLEEP_MODE_1=y
+# 低功耗时钟用板载 32.768kHz 晶振（RTC_CLK_SRC_EXT_CRYS 已启用）。
+# 注意：bt.c:1715 会在启动时用 rtc_clk_slow_src_get() 实测确认晶振真的存在，
+# 探测不到就回退主晶振并打 warning。S3 上回退本身不会禁用 light sleep
+# （禁用只在 bt.c:1720 的 !MAIN_XTAL_PU_DURING_LIGHT_SLEEP 条件下发生）。
+CONFIG_BT_CTRL_LPCLK_SEL_EXT_32K_XTAL=y
+# 32.768kHz 晶振缺失时的兜底：light sleep 期间保持主晶振供电，避免蓝牙失去
+# 基准时钟。晶振存在时该选项不生效，因此不增加静态功耗（见 Kconfig help）。
+CONFIG_BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP=y
+
+# --- 功耗优化：USB Serial/JTAG 与自动 light sleep 共存 ------------------------
+# ESP32-S3 的 USB-Serial-JTAG 无法在 light sleep 下工作。不开此项时，一旦
+# esp_pm_configure(light_sleep_enable=true)，串口日志与烧录通道会在插线状态下
+# 失效（且 USB SOF 监测只容忍 3ms 的休眠间隙）。
+# 开启后：插着 USB 时内部持有 NO_LIGHT_SLEEP 锁 -> 日志/烧录照常；
+# 拔线走电池后才真正进入 light sleep（省电目标场景）。
+CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION=y
+
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=8196
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8196
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
