@@ -15,9 +15,11 @@
 
 #include "diag_power.h"
 
+#include "esp_attr.h"
 #include "esp_cpu.h"
 #include "esp_log.h"
 #include "esp_pm.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -207,4 +209,187 @@ void diag_power_start(void)
         s_started = false;
         ESP_LOGW(TAG, "failed to start diag task");
     }
+}
+
+/* ===========================================================================
+ * 重启 / 跨档取证（RTC 内存）
+ *
+ * 为什么用 RTC 内存而不是 NVS：
+ *   - 误读循环里设备每几秒重启一次，每次都写 NVS 会白白磨损 flash；
+ *   - RTC 内存在 esp_restart()（软复位）之后原样保留，正好覆盖"跨档重启"路径；
+ *   - 唯一会丢的场景是彻底断电 —— 取证期间不要让用户拔电池。
+ * =========================================================================== */
+
+#define BOOT_REC_MAGIC       0xD1A6B007u
+/*!< "上一次软复位前存活时间 ≤ 该值"即视为异常短命，据此判定重启风暴。 */
+#define BOOT_STORM_UPTIME_MS 15000
+
+typedef struct {
+    uint32_t magic;
+    uint32_t boot_seq;          /*!< 上电以来第几次启动 */
+    int      reset_reason;      /*!< 本次启动的原因 (= 上一次重启的类型) */
+    int      boot_pos;          /*!< 本次启动判定的档位 */
+    int64_t  uptime_ms;         /*!< 本次运行已存活时长，由 tick 刷新 */
+    int64_t  last_sw_uptime_ms; /*!< 上一次软复位前存活了多久（0 = 尚无记录） */
+    /* 最近一次运行期档位判定背后的原始样本 */
+    int      dip_r0, dip_r1;    /*!< adc_oneshot_read 返回码 (0 = ESP_OK) */
+    int      dip_v0, dip_v1;    /*!< ADC 原始读数，阈值 2000 */
+    int      dip_from, dip_to;  /*!< 判定前后的档位 */
+    int      dip_hits;          /*!< 提交时的去抖命中数 */
+    int64_t  dip_at_ms;         /*!< 判定发生的时刻（开机后 ms） */
+    /* 自证统计 */
+    uint32_t verify_total;
+    uint32_t verify_rejected;   /*!< 被判为休眠误读的次数 */
+    uint32_t storm_suppressed;  /*!< 熔断次数 */
+    int      last_recheck;      /*!< 最近一次复读得到的档位 */
+} diag_boot_rec_t;
+
+RTC_DATA_ATTR static diag_boot_rec_t s_boot_rec;
+
+static void boot_rec_ensure(void)
+{
+    if (s_boot_rec.magic == BOOT_REC_MAGIC) {
+        return;
+    }
+    memset(&s_boot_rec, 0, sizeof(s_boot_rec));
+    s_boot_rec.magic        = BOOT_REC_MAGIC;
+    s_boot_rec.reset_reason = -1;
+    s_boot_rec.boot_pos     = -1;
+    s_boot_rec.dip_r0 = s_boot_rec.dip_r1 = -1;
+    s_boot_rec.dip_v0 = s_boot_rec.dip_v1 = -1;
+    s_boot_rec.dip_from = s_boot_rec.dip_to = -1;
+    s_boot_rec.last_recheck = -1;
+}
+
+void diag_boot_note_boot(int boot_pos)
+{
+    boot_rec_ensure();
+    s_boot_rec.boot_seq++;
+    s_boot_rec.reset_reason = (int)esp_reset_reason();
+    s_boot_rec.boot_pos     = boot_pos;
+    s_boot_rec.uptime_ms    = 0;
+}
+
+void diag_boot_note_uptime_ms(int64_t ms)
+{
+    boot_rec_ensure();
+    s_boot_rec.uptime_ms = ms;
+}
+
+void diag_boot_note_dip_sample(int r0, int r1, int v0, int v1, int from, int to, int hits)
+{
+    boot_rec_ensure();
+    s_boot_rec.dip_r0    = r0;
+    s_boot_rec.dip_r1    = r1;
+    s_boot_rec.dip_v0    = v0;
+    s_boot_rec.dip_v1    = v1;
+    s_boot_rec.dip_from  = from;
+    s_boot_rec.dip_to    = to;
+    s_boot_rec.dip_hits  = hits;
+    s_boot_rec.dip_at_ms = s_boot_rec.uptime_ms;
+}
+
+void diag_boot_note_verify(int from, int to, int recheck, bool confirmed)
+{
+    boot_rec_ensure();
+    (void)from;
+    (void)to;
+    s_boot_rec.verify_total++;
+    s_boot_rec.last_recheck = recheck;
+    if (!confirmed) {
+        s_boot_rec.verify_rejected++;
+    }
+}
+
+void diag_boot_note_confirmed_restart(void)
+{
+    boot_rec_ensure();
+    s_boot_rec.last_sw_uptime_ms = s_boot_rec.uptime_ms;
+}
+
+bool diag_boot_is_restart_storm(void)
+{
+    boot_rec_ensure();
+    /*!< 只有"上一次也是软件复位（= 我们自己 esp_restart 的）"才可能是循环。 */
+    if (s_boot_rec.reset_reason != (int)ESP_RST_SW) {
+        return false;
+    }
+    /*!< 0 = 没有记录（例如刚上电），不能据此判风暴。 */
+    if (s_boot_rec.last_sw_uptime_ms <= 0) {
+        return false;
+    }
+    return s_boot_rec.last_sw_uptime_ms <= BOOT_STORM_UPTIME_MS;
+}
+
+void diag_boot_note_storm_suppressed(void)
+{
+    boot_rec_ensure();
+    s_boot_rec.storm_suppressed++;
+    /*!< 清掉短命标记，避免把之后正常的用户拨档（此时 uptime 已经很长）也拦下来。 */
+    s_boot_rec.last_sw_uptime_ms = 0;
+}
+
+static const char *reset_reason_str(int r)
+{
+    switch (r) {
+        case ESP_RST_UNKNOWN:
+            return "UNKNOWN";
+        case ESP_RST_POWERON:
+            return "POWERON";
+        case ESP_RST_EXT:
+            return "EXT_PIN";
+        case ESP_RST_SW:
+            return "SW (esp_restart)";
+        case ESP_RST_PANIC:
+            return "PANIC";
+        case ESP_RST_INT_WDT:
+            return "INT_WDT";
+        case ESP_RST_TASK_WDT:
+            return "TASK_WDT";
+        case ESP_RST_WDT:
+            return "WDT";
+        case ESP_RST_DEEPSLEEP:
+            return "DEEPSLEEP";
+        case ESP_RST_BROWNOUT:
+            return "BROWNOUT";
+        case ESP_RST_SDIO:
+            return "SDIO";
+        default:
+            return "?";
+    }
+}
+
+char *diag_boot_load(void)
+{
+    boot_rec_ensure();
+
+    char  *out = NULL;
+    size_t n   = 0;
+    FILE  *fo  = open_memstream(&out, &n);
+    if (fo == NULL) {
+        return NULL;
+    }
+
+    fprintf(fo, "=== boot / reset / DIP forensics (RTC memory) ===\n");
+    fprintf(fo, "boot count     : %u\n", (unsigned)s_boot_rec.boot_seq);
+    fprintf(fo, "reset reason   : %d (%s)   <- why THIS boot started\n", s_boot_rec.reset_reason,
+            reset_reason_str(s_boot_rec.reset_reason));
+    fprintf(fo, "boot dip pos   : %d   (0=center 1=wifi 2=ble)\n", s_boot_rec.boot_pos);
+    fprintf(fo, "uptime now     : %lld s\n", (long long)(s_boot_rec.uptime_ms / 1000));
+    fprintf(fo, "prev sw uptime : %lld ms   (<= %d ms => restart storm)\n", (long long)s_boot_rec.last_sw_uptime_ms,
+            BOOT_STORM_UPTIME_MS);
+    fprintf(fo, "\n--- last runtime DIP decision sample ---\n");
+    fprintf(fo, "at uptime      : %lld s\n", (long long)(s_boot_rec.dip_at_ms / 1000));
+    fprintf(fo, "adc read rc    : ch_ble=%d ch_wifi=%d  (0 = ESP_OK)\n", s_boot_rec.dip_r0, s_boot_rec.dip_r1);
+    fprintf(fo, "adc raw value  : ch_ble=%d ch_wifi=%d  (threshold = 2000)\n", s_boot_rec.dip_v0, s_boot_rec.dip_v1);
+    fprintf(fo, "pos decision   : %d -> %d  (debounce hits = %d)\n", s_boot_rec.dip_from, s_boot_rec.dip_to,
+            s_boot_rec.dip_hits);
+    fprintf(fo, "\n--- light-sleep re-verify ---\n");
+    fprintf(fo, "verify runs    : %u\n", (unsigned)s_boot_rec.verify_total);
+    fprintf(fo, "rejected(fake) : %u   <- judged as light-sleep misread\n", (unsigned)s_boot_rec.verify_rejected);
+    fprintf(fo, "storm fuse     : %u   <- restarts suppressed\n", (unsigned)s_boot_rec.storm_suppressed);
+    fprintf(fo, "last recheck   : %d\n", s_boot_rec.last_recheck);
+
+    fclose(fo);
+    return out;
 }
