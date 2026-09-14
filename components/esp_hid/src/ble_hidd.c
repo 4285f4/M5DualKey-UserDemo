@@ -479,10 +479,19 @@ static void hid_event_handler(esp_ble_hidd_dev_t *dev, int device_index, esp_gat
             esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT_NO_MITM);
 
             esp_ble_conn_update_params_t conn_params = {
-                .min_int = 6, //interval_min unit:1.25ms Range: 0x06 to 0x0C80
-                .max_int = 6, //interval_max unit:1.25ms Range: 0x06 to 0x0C80
-                .latency = 30, //latency Slave latency for the connection in number of connection events. Range: 0x0000 to 0x01F3
-                .timeout = 100, //Supervision timeout for the LE Link. Range: 0x000A to 0x0C80. 0x000A to 0x0C80 Time = N * 10 msec
+                /*!< 连接间隔 12 = 12 × 1.25ms = 15ms（原值 6 = 7.5ms）。
+                 *   7.5ms 是游戏手柄级别的间隔，翻页器完全不需要：主机每 7.5ms
+                 *   就要发一次连接事件，从机即使靠 latency 跳过，锚点维护本身也要
+                 *   唤醒射频。15ms 已远快于人眼可感知的翻页延迟（一次翻页 15ms）。
+                 *   latency 20：从机可跳过 20 个事件，静置时实际唤醒间隔
+                 *   ≈ 15ms × 21 = 315ms。latency 只是"允许跳过"，一旦有按键报告
+                 *   待发，控制器会在下一个连接事件立即发出，不会增加按键延迟。
+                 *   timeout 200 = 2s，需满足 timeout > 2 × interval × (latency+1)
+                 *   = 2 × 15ms × 21 = 630ms，此处留了 3 倍余量。 */
+                .min_int = 12,  //interval_min unit:1.25ms Range: 0x06 to 0x0C80
+                .max_int = 12,  //interval_max unit:1.25ms Range: 0x06 to 0x0C80
+                .latency = 20,  //latency Slave latency for the connection in number of connection events. Range: 0x0000 to 0x01F3
+                .timeout = 200, //Supervision timeout for the LE Link. Range: 0x000A to 0x0C80. 0x000A to 0x0C80 Time = N * 10 msec
             };
             memcpy(conn_params.bda, param->connect.remote_bda, ESP_BD_ADDR_LEN);
             esp_ble_gap_update_conn_params(&conn_params);

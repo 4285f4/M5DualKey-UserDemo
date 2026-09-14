@@ -212,6 +212,12 @@ void btn_progress_set_long_press_ms(uint16_t ms);
  */
 uint16_t btn_progress_get_long_press_ms(void);
 
+/**
+ * @brief 最近一次上报中是否有键处于按下状态。
+ *        灯效任务用它决定心跳周期（空闲 50ms / 有键 10ms）以配合 light sleep。
+ */
+bool btn_progress_has_pressed_key(void);
+
 #ifdef __cplusplus
 }
 #endif

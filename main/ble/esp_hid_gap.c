@@ -345,9 +345,17 @@ esp_err_t esp_hid_ble_gap_adv_init(uint16_t appearance, const char *device_name)
 }
 esp_err_t esp_hid_ble_gap_adv_start(void)
 {
+    /*!< 广播间隔 0x200 = 512 × 0.625ms = 320ms。
+     *
+     *   原值 0x20/0x30 (20~30ms) 是 IDF HID 示例的默认值，对翻页器而言过于激进：
+     *   每次广播事件都要唤醒射频发 3 个信道的包，间隔 25ms 时射频占空比约 10%，
+     *   静置（未连接）时这是纯损耗。改为 320ms 后射频占空比降到 ~1%，仍有 12 倍余量。
+     *   代价：主机主动扫描发现设备最多多等约 0.3s（配对时主机扫描占空比很高，
+     *   实际感知不到）；已配对设备的回连由主机直连，与广播间隔无关。
+     *   若感觉配对/回连变慢，把 0x200 调小即可（256 × 0.625 = 160ms）。 */
     static esp_ble_adv_params_t hidd_adv_params = {
-        .adv_int_min       = 0x20,
-        .adv_int_max       = 0x30,
+        .adv_int_min       = 0x200,
+        .adv_int_max       = 0x200,
         .adv_type          = ADV_TYPE_IND,
         .own_addr_type     = BLE_ADDR_TYPE_PUBLIC,
         .channel_map       = ADV_CHNL_ALL,

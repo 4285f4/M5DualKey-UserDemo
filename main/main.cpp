@@ -108,6 +108,28 @@ static bool dip_switch_wifi_enabled(int pos)
     return pos != DIP_SWITCH_POS_BLE;
 }
 
+/*!< iot_button 定时器按需启停。
+ *
+ *   espressif__button 组件的 20ms 周期 esp_timer（CONFIG_BUTTON_PERIOD_TIME_MS）
+ *   只在 driver->enable_power_save 为真时才会自动停止，而 dual_button 驱动没有
+ *   实现该能力（无 enable_power_save 字段、无 get_gpio_num），定时器因此永不停止
+ *   → 50Hz 常驻唤醒，会持续打断 tickless idle。这里自行跟踪状态并跟随按键启停：
+ *   有键按下才运行，全部松开立即停。
+ *   本地状态镜像不可省：iot_button_stop() 在定时器已停时会 ESP_LOGE 并返回
+ *   ESP_ERR_INVALID_STATE，不做跟踪会刷屏日志。 */
+static bool s_iot_btn_timer_running = false;
+
+static void iot_button_timer_enable(bool enable)
+{
+    if (enable) {
+        if (!s_iot_btn_timer_running && iot_button_resume() == ESP_OK) {
+            s_iot_btn_timer_running = true;
+        }
+    } else if (s_iot_btn_timer_running && iot_button_stop() == ESP_OK) {
+        s_iot_btn_timer_running = false;
+    }
+}
+
 /*!< 阻塞读取拨码开关档位(多次采样取平均, 返回 0=中间 / 1=WiFi档 / 2=蓝牙档) */
 static int dip_switch_read_position(adc_oneshot_unit_handle_t handle)
 {
@@ -1964,11 +1986,18 @@ static void keyboard_cb(keyboard_btn_handle_t kbd_handle, keyboard_btn_report_t 
         // ESP_LOGI(TAG, "Sent immediate status refresh request due to key state change");
     }
 
-    // iot_button is enabled for dual-button long press detection only when a button is pressed.
-    if (kbd_report.key_pressed_num) {
-        iot_button_resume();
-    }
+    // iot_button 仅用于双键组合长按（复位/配网）检测。
+    // 该组件定时器不会自行停止，这里跟随按键状态启停：有键按下才跑，全部松开立即停，
+    // 避免 20ms(50Hz) 常驻唤醒拖住 tickless idle。
+    iot_button_timer_enable(kbd_report.key_pressed_num > 0);
 }
+
+/*!< 灯效任务心跳：空闲 50ms / 有键按下 10ms。
+ *   原为固定 10ms 无条件唤醒，会持续把 CPU 从 light sleep 拉起来。
+ *   按键响应不依赖本任务轮询（keyboard_cb 由中断边沿驱动），所以空闲期拉长
+ *   不影响手感；有键按下时回到 10ms，保证长按到点判定精度与热力图淡出效果。 */
+#define LIGHT_TASK_PERIOD_IDLE_MS 50
+#define LIGHT_TASK_PERIOD_ACTIVE_MS 10
 
 static void light_progress_task(void *pvParameters)
 {
@@ -1976,9 +2005,10 @@ static void light_progress_task(void *pvParameters)
         if (bsp_ws2812_is_enable()) {
             light_progress();
         }
-        /*!< 顺便作为 10ms 心跳：检查长按是否已到阈值（方案A：到点即触发） */
+        /*!< 顺便作为心跳：检查长按是否已到阈值（方案A：到点即触发） */
         btn_progress_tick();
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay((btn_progress_has_pressed_key() ? LIGHT_TASK_PERIOD_ACTIVE_MS : LIGHT_TASK_PERIOD_IDLE_MS) /
+                   portTICK_PERIOD_MS);
     }
 }
 
@@ -2529,8 +2559,11 @@ void app_main(void)
 
     /*!< Read the DIP switch before wireless init: BLE position runs BLE only */
     switch_pos = dip_switch_read_position(handle);
+    /*!< 蓝牙档 = 纯蓝牙翻页器，关掉一切用不上的常驻负载。
+     *   开机时判定一次即可：跨越蓝牙档/非蓝牙档边界会 esp_restart()（见 adc_switch_task）。 */
+    const bool ble_only_mode = !dip_switch_wifi_enabled(switch_pos);
     ESP_LOGI(TAG, "DIP switch position at boot: %d (%s)", switch_pos,
-             dip_switch_wifi_enabled(switch_pos) ? "WiFi enabled" : "BLE only");
+             ble_only_mode ? "BLE only" : "WiFi enabled");
 
     xTaskCreate(adc_switch_task, "adc_switch_task", 4096, handle, 5, NULL);
 
@@ -2540,7 +2573,17 @@ void app_main(void)
         led_strip_clear(led_strip);
     }
 
-    chain_bus_init();
+    /*!< Chain 扩展总线：蓝牙档下不启动。
+     *   chain_bus_task 每 3s 会对两条总线各做一次 isDeviceConnected()，其内部是
+     *   1ms 周期的忙等轮询（50ms 超时 × 3 次重试 = 150ms/总线/次）；未插任何 Chain
+     *   子设备时永远等不到回应，每次都会跑满超时。停用后可省掉双 UART 时钟与这部分
+     *   空转，也让系统有机会进入更长的空闲。
+     *   翻页器场景用不到扩展口；需要时把拨码拨到 WiFi 档即可恢复。 */
+    if (ble_only_mode) {
+        ESP_LOGI(TAG, "BLE-only: Chain 扩展总线不初始化 (双 UART / 扫描任务均不启动)");
+    } else {
+        chain_bus_init();
+    }
 
     /* ADC detection test */
     test_adc_detection(led_strip, handle);
@@ -2579,7 +2622,7 @@ void app_main(void)
     // }
 
     /*!< 蓝牙档只开启蓝牙: 跳过 WiFi 与网页服务以省电, 其余档位维持原行为 */
-    if (dip_switch_wifi_enabled(switch_pos)) {
+    if (!ble_only_mode) {
         // 初始化WiFi
         wifi_init_sta();
 
@@ -2594,7 +2637,18 @@ void app_main(void)
         xTaskCreate(device_status_task, "device_status_task", 4096, NULL, 5, NULL);
     }
 
-    tinyusb_hid_init();
+    /*!< USB-OTG / TinyUSB：蓝牙档下不启动。
+     *   tinyusb_hid_init() 会拉起 dwc2 驱动并使能 USB-OTG PHY，而该驱动在未接主机时
+     *   也不会门控 PHY 时钟（dwc2_common.c 清掉 STOPPCLK/GATEHCLK），PHY 会持续耗电；
+     *   同时 USB 协议栈要求 48MHz 时钟域常开，会阻止系统进入更低的功耗状态。
+     *   注意：日志与烧录走的是原生 USB-Serial-JTAG（PID 303A:1001），与 TinyUSB
+     *   （PID 303A:8000）是两条独立通道，跳过 TinyUSB 不影响插线看日志/烧录。
+     *   需要当 USB 键盘用或接 Chain 子设备时，拨到 WiFi 档重启即可。 */
+    if (ble_only_mode) {
+        ESP_LOGI(TAG, "BLE-only: TinyUSB 与 USB-OTG PHY 不初始化 (日志仍走原生 USB-Serial-JTAG)");
+    } else {
+        tinyusb_hid_init();
+    }
     // tinyusb_cdc_init(NULL, NULL);
     ble_hid_init();
 

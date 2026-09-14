@@ -454,6 +454,15 @@ static void custom_emit_tap(const custom_key_action_t *action, const custom_kbd_
     custom_state_send(base);
 }
 
+/*!< 最近一次上报中的按下键数。供灯效任务判断"是否需要 10ms 快心跳"。
+ *   不复用 custom_left/right_down：那两个只在自定义映射模式下更新。 */
+static uint8_t s_keys_down = 0;
+
+bool btn_progress_has_pressed_key(void)
+{
+    return s_keys_down > 0;
+}
+
 void btn_progress(keyboard_btn_report_t kbd_report)
 {
     static uint8_t layer         = 1;
@@ -466,6 +475,8 @@ void btn_progress(keyboard_btn_report_t kbd_report)
     bool if_consumer_report      = false;
     bool release_consumer_report = false;
     sys_param_t *sys_param       = settings_get_parameter();
+
+    s_keys_down = kbd_report.key_pressed_num;
 
     if (sys_param->report_type == USB_CDC_REPORT) {
         // USB CDC 模式：发送原始键盘数据

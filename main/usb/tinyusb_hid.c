@@ -54,6 +54,15 @@ static void tusb_device_task(void *arg)
 void tinyusb_hid_keyboard_report(hid_report_t report)
 {
     static bool use_full_key = false;
+
+    /*!< USB 协议栈未初始化时直接丢弃。
+     *   蓝牙档下 app_main() 不再调用 tinyusb_hid_init()（USB-OTG PHY 常开会持续耗电），
+     *   但按键回调与映射逻辑仍会走到这里；此时 s_tinyusb_hid 为 NULL，
+     *   下面的 tud_suspended() 也读不到有效的 USB 设备状态，必须先于一切返回。 */
+    if (s_tinyusb_hid == NULL) {
+        return;
+    }
+
     // Remote wakeup
     if (tud_suspended()) {
         // Wake up host if we are in suspend mode
@@ -153,6 +162,11 @@ void tud_hid_report_complete_cb(uint8_t itf, uint8_t const *report, uint16_t len
 {
     (void)itf;
     (void)len;
+
+    /*!< 蓝牙档下 USB 栈未初始化，s_tinyusb_hid 为 NULL，需守卫 */
+    if (s_tinyusb_hid == NULL) {
+        return;
+    }
 
     xTaskNotifyGive(s_tinyusb_hid->task_handle);
 }
