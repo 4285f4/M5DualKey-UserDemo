@@ -511,9 +511,9 @@ void btn_progress(keyboard_btn_report_t kbd_report)
     /*!< 有任何按键事件就把灯效快渲染窗口续上（含松手那次，淡出从这里开始计时）。 */
     s_last_key_event_us = esp_timer_get_time();
 
-    /*!< 时延取证：统计"按住期间"相邻回调的间隔。扫描周期是 1ms，若这里出现几十上百
-     *   ms，说明扫描任务（或本回调所在的任务）被长时间饿过 —— 这正是"边沿晚检出"
-     *   的形态，与 btn_progress.h 里写的那两个判据配套使用。 */
+    /*!< 时延取证：⚠️ 本函数是**按键事件回调**（只在 down/up 跳变时被调，不是每 1ms 扫描），
+     *   所以下面算出的"相邻回调间隔"实际等于**一次按住的持续时长（up - down）**，
+     *   与 tap_hold_ms 同源，**测不出扫描任务被饿死**。名字保留只为兼容 /diag 输出。 */
     {
         const int64_t cb_now_us = esp_timer_get_time();
         if (s_prev_cb_had_key) {
