@@ -101,6 +101,18 @@ bool g_ble_mapping_enabled = true;
 uint8_t g_connect_status   = 0;      // 0:未连接, 1:连接中, 2:已连接
 bool g_ble_adv_status      = false;  // 蓝牙广播状态: false=未广播, true=正在广播
 
+/*!< ---- 诊断计数：把"按键失灵"拆成三层，逐层定位 ----
+ *   2026-09-15 实机：深睡唤醒后按键单击既无灯效也不触发映射。可能是
+ *   ①引脚层看不见（复用/上拉/hold）、②驱动层没回调、③灯效层没渲染。
+ *   三个 RAM 计数分别覆盖三层（掉电即失，本就不需要跨重启）：
+ *     · g_key_pin_changes  device_status_task 轮询发现键脚电平变化
+ *     · g_key_cb_count     keyboard_cb 被调用
+ *     · g_key_flash_count  按键灯效脉冲被触发
+ *   表现 = ②不增 ⇒ ①之前就断了；②增而③不增 ⇒ 灯效路径问题。 */
+volatile uint32_t g_key_pin_changes = 0;
+volatile uint32_t g_key_cb_count    = 0;
+volatile uint32_t g_key_flash_count = 0;
+
 /*!< ========================= 自动关机（仅蓝牙档） =========================
  *
  *   用户诉求：蓝牙档长时间没有主机连接时，不能一直广播耗电。
@@ -2093,6 +2105,19 @@ static void websocket_task(void *pvParameters)
 static void device_status_task(void *pvParameters)
 {
     int tick = 0;
+    /*!< 诊断用的"上一次值"（仅本任务 = 仅蓝牙档）。
+     *   2026-09-15 现场："电脑蓝牙扫描几次才连上，连上没多久又断开，约 3s 一个循环"
+     *   + "按键单击无灯效、不触发映射"，而事件日志里却既没有重启也没有第二次深睡 ——
+     *   说明现象发生在**运行期**（BLE 链路层/按键可见性），只能靠运行期埋点回答：
+     *     BLECONN = 连接状态跳变（几条链路事件、各在开机后多久）
+     *     KEYPIN  = 键脚电平跳变（引脚层到底看不看得见按下）
+     *     KEYCB   = keyboard_cb 回调次数（驱动层认没认到）
+     *   三者对照即可判定链路断在哪一层。 */
+    int      last_conn   = -1;
+    int      last_lvl0   = -1;
+    int      last_lvl17  = -1;
+    int      conn_evt    = 0; /*!< BLECONN 已记条数（限 12 条，别把窗口吃光） */
+    uint32_t last_cb     = 0;
 
     while (1) {
         update_device_status();
@@ -2102,6 +2127,34 @@ static void device_status_task(void *pvParameters)
             update_power_status(NULL);
         }
         tick++;
+        /*!< ---- 诊断取证（见函数头说明） ---- */
+        if ((int)g_connect_status != last_conn) {
+            if (last_conn >= 0 && conn_evt < 12) { /*!< 首轮只记基线；限 12 条防刷屏 */
+                diag_log_event("BLECONN stat=%d adv=%d up=%llds", (int)g_connect_status, (int)g_ble_adv_status,
+                               (long long)(esp_timer_get_time() / 1000000));
+                conn_evt++;
+            }
+            last_conn = (int)g_connect_status;
+        }
+        {
+            const int l0  = gpio_get_level(GPIO_NUM_0);
+            const int l17 = gpio_get_level(GPIO_NUM_17);
+            if (l0 != last_lvl0 || l17 != last_lvl17) {
+                /*!< 首次只记基线（不占配额）；之后每次变化最多记 10 条，避免
+                 *   抖动时把 NVS 单次开机的追加配额（LOG_MAX_APPENDS）吃光。 */
+                if (last_lvl0 >= 0 && g_key_pin_changes < 10) {
+                    diag_log_event("KEYPIN lvl0=%d lvl17=%d up=%llds", l0, l17,
+                                   (long long)(esp_timer_get_time() / 1000000));
+                    g_key_pin_changes++;
+                }
+                last_lvl0  = l0;
+                last_lvl17 = l17;
+            }
+        }
+        if (g_key_cb_count != last_cb) {
+            diag_log_event("KEYCB n=%u flash=%u", (unsigned)g_key_cb_count, (unsigned)g_key_flash_count);
+            last_cb = g_key_cb_count;
+        }
         /*!< 自动关机检查（仅本任务存在，即仅蓝牙档）。周期约 1s，
          *   所以超时精度是 ±1s 量级 —— 对"分钟"级超时完全够用。 */
         auto_off_tick();
@@ -2261,6 +2314,7 @@ static void keyboard_cb(keyboard_btn_handle_t kbd_handle, keyboard_btn_report_t 
 {
     ESP_LOGI(TAG, "keyboard_cb: pressed=%ld, released=%ld, changed=%d", kbd_report.key_pressed_num,
              kbd_report.key_release_num, kbd_report.key_change_num);
+    g_key_cb_count++; /*!< 诊断：驱动层确实回调了（见文件头部计数说明） */
 
     if (rgb_matrix_get_suspend_state() == true && g_device_status.left_key_color == 0x000000 &&
         g_device_status.right_key_color == 0x000000) {
@@ -2294,6 +2348,7 @@ static void keyboard_cb(keyboard_btn_handle_t kbd_handle, keyboard_btn_report_t 
         for (int i = 1; i <= kbd_report.key_change_num; i++) {
             key_flash_trigger(kbd_report.key_data[kbd_report.key_pressed_num - i].input_index);
         }
+        g_key_flash_count++; /*!< 诊断：灯效脉冲已触发（能否看见另说，见 /diag 的 LED 行） */
     }
 
     // 按键状态变更时，发送立即刷新指令
@@ -2574,6 +2629,8 @@ static void power_enter_deep_sleep(void)
      *     · WAKE1 取证与唤醒灯效**从不执行**（它们挂在 cause==EXT1 上）。
      *   深睡前必须显式关掉，让 EXT1 成为唯一唤醒源。 */
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+    /*!< ⚠️ 只关这一个并不够 —— 实测仍有 RTC 定时器把设备不到 1s 就拉起来
+     *   （light sleep 遗留的 RTC_TIMER_TRIG_EN），见函数末尾的 ESP_SLEEP_WAKEUP_ALL 全清。 */
 
     /*!< ---- 【本轮核心修复②】保活 RTC_PERIPH 电源域 ----
      *   RTC IO 的上下拉属于 RTC_PERIPH 域。IDF 只对 EXT0/GPIO 唤醒自动保活它
@@ -2601,8 +2658,11 @@ static void power_enter_deep_sleep(void)
     /*!< 等上拉把焊盘电容充上去，再读数 —— 这样 SLEEP# 里的电平才是可信的。 */
     vTaskDelay(pdMS_TO_TICKS(30));
 
-    const uint64_t  wake_mask = (1ULL << GPIO_NUM_0) | (1ULL << GPIO_NUM_17);
-    const esp_err_t err       = esp_sleep_enable_ext1_wakeup_io(wake_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+    const uint64_t wake_mask = (1ULL << GPIO_NUM_0) | (1ULL << GPIO_NUM_17);
+
+    /*!< 先配一次 ext1：只为拿到返回码写进 SLEEP# 取证；真正的"唯一唤醒源"
+     *   在最后（清完全部唤醒源之后）重新武装一次。 */
+    const esp_err_t err = esp_sleep_enable_ext1_wakeup_io(wake_mask, ESP_EXT1_WAKEUP_ANY_LOW);
     if (err != ESP_OK) {
         /*!< 不 abort：即使按键唤醒没配上，拨档经过中间档会断电，等于重新上电，
          *   设备不会变砖。日志留证据即可。 */
@@ -2611,13 +2671,30 @@ static void power_enter_deep_sleep(void)
 
     /*!< 把"入睡瞬间"的状态也落 NVS：假唤醒会让设备重启，而蓝牙档没有控制台 ——
      *   这一行是唯一能证明"睡下去时引脚到底是高还是低"的证据。
-     *   rtc(lvl…) 是**配好 RTC 上拉、并使能输入通路、且延时之后**读的，值可信。 */
-    diag_log_event("SLEEP#%u pre(lvl0=%d lvl17=%d) rtc(lvl0=%u lvl17=%u) mask=0x%llx err=%d",
-                   (unsigned)s_ds_seq, s_ds_pre_lvl0, s_ds_pre_lvl17,
-                   (unsigned)rtc_gpio_get_level(GPIO_NUM_0), (unsigned)rtc_gpio_get_level(GPIO_NUM_17),
-                   (unsigned long long)wake_mask, (int)err);
+     *   · rtc(lvl…) 是**配好 RTC 上拉、并使能输入通路、且延时之后**读的，值可信。
+     *   · up / idle 用来回答"这轮究竟醒着多久才睡、空闲计数有没有真的到点"。 */
+    diag_log_event("SLEEP#%u up=%llds idle=%us pre(lvl0=%d lvl17=%d) rtc(lvl0=%u lvl17=%u) mask=0x%llx err=%d",
+                   (unsigned)s_ds_seq, (long long)(esp_timer_get_time() / 1000000), (unsigned)s_auto_off_idle_s,
+                   s_ds_pre_lvl0, s_ds_pre_lvl17, (unsigned)rtc_gpio_get_level(GPIO_NUM_0),
+                   (unsigned)rtc_gpio_get_level(GPIO_NUM_17), (unsigned long long)wake_mask, (int)err);
 
     vTaskDelay(pdMS_TO_TICKS(50)); /*!< 让最后两条日志落出去 */
+
+    /*!< ---- 【本轮核心修复①'】把唤醒源清成"只剩 ext1" ----
+     *   上一轮只关了 ESP_SLEEP_WAKEUP_GPIO，实机结果却是
+     *   `BOOTRAW cause=4 rst=8 causes=0x10 ext1=0x0 slept=0s`：
+     *   cause=4 = **TIMER**、causes 的 bit4 也是 TIMER。也就是设备睡下不到 1s
+     *   就被 RTC 定时器拉起来了 —— 用户观感就是"根本没睡 / 反复出现"。
+     *   来源：自动 light sleep（PM 的 vApplicationSleep）会调
+     *   esp_sleep_enable_timer_wakeup() 把 RTC_TIMER_TRIG_EN 置进
+     *   s_config.wakeup_triggers，而它**从不主动清理**；esp_deep_sleep_start()
+     *   就直接继承了那个"下一个 tick 就到点"的闹钟。
+     *   ⇒ 深睡前必须 ESPSLEEP_WAKEUP_ALL 全清，再单独武装 ext1。
+     *   ⚠️ 这两步之间**绝不能再有阻塞调用**（vTaskDelay / 写 NVS / 打日志）——
+     *   一阻塞，空闲的 PM 就可能再进一次 light sleep，把闹钟重新装上。
+     *   所以 SLEEP# 日志与全部延时都放在这一行**之前**。 */
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    esp_sleep_enable_ext1_wakeup_io(wake_mask, ESP_EXT1_WAKEUP_ANY_LOW);
 
     esp_deep_sleep_start();
     __builtin_unreachable();
@@ -3287,8 +3364,12 @@ void app_main(void)
                        (int)rst, (unsigned long)causes, (unsigned long long)st, (unsigned)s_ds_seq,
                        (long long)slept_s);
 
+        /*!< 唤醒提示的判定放宽成"任何深睡唤醒"，不再只认 cause==EXT1：
+         *   上一轮唤醒源被 light sleep 遗留的 RTC 定时器抢走（cause=4 TIMER），
+         *   挂在 cause==EXT1 上的提示因此从未执行 → 用户以为"唤醒没有灯效"。 */
+        woke_from_deep_sleep = (rst == ESP_RST_DEEPSLEEP) || (cause != ESP_SLEEP_WAKEUP_UNDEFINED);
+
         if (cause == ESP_SLEEP_WAKEUP_EXT1) {
-            woke_from_deep_sleep = true;
             ESP_LOGW(TAG, "从深度睡眠唤醒: EXT1, mask=0x%llx (bit0=Key1/GPIO0, bit17=Key2/GPIO17), 睡了 %llds",
                      (unsigned long long)st, (long long)slept_s);
             /*!< ⚠️ 这里用 rtc_gpio_get_level()：引脚此刻仍停在入睡前设的 RTC 复用上，
@@ -3298,6 +3379,9 @@ void app_main(void)
                            (unsigned)s_ds_seq, (unsigned long long)st, (long long)slept_s, s_ds_pre_lvl0,
                            s_ds_pre_lvl17, (unsigned)rtc_gpio_get_level(GPIO_NUM_0),
                            (unsigned)rtc_gpio_get_level(GPIO_NUM_17));
+        } else if (woke_from_deep_sleep) {
+            ESP_LOGW(TAG, "从深度睡眠唤醒但唤醒源不是 EXT1: cause=%d causes=0x%lx（有唤醒源没被清干净）",
+                     (int)cause, (unsigned long)causes);
         } else {
             ESP_LOGI(TAG, "启动/唤醒原因: cause=%d rst=%d causes=0x%lx (rst: 1=上电, 8=深睡唤醒)", (int)cause,
                      (int)rst, (unsigned long)causes);
@@ -3366,25 +3450,49 @@ void app_main(void)
     bsp_rgb_matrix_init();
     bsp_ws2812_enable(true);
     xTaskCreate(light_progress_task, "light_progress_task", 4096, NULL, 5, &light_progress_task_handle);
+    /*!< 诊断：确认"灯能亮"的两个前提（板级使能 + 灯带句柄已建）。
+     *   若深睡唤醒后这里读到 en=0 或 strip=0，则"按键无灯效"的根因在灯带初始化，
+     *   而不是按键本身 —— 一条日志就能把这两条路分开。 */
+    diag_log_event("LEDEN en=%d strip=%d", (int)bsp_ws2812_is_enable(), (int)(led_strip != NULL));
 
-    /*!< 从自动关机深睡被按键唤醒时给一次灯效反馈（呼吸一次，与睡前的三次区分开）。
+    /*!< 从自动关机深睡被唤醒时给一次灯效反馈（呼吸一次，与睡前的三次区分开）。
      *   放在这里而不是更早：此刻 WS2812 与渲染任务才就绪，led_strip 才有值。 */
     if (woke_from_deep_sleep) {
         auto_off_wake_indication();
     }
 
-    /*!< ---- 【本轮核心修复③】把两个键脚从 RTC 复用里放回数字复用 ----
-     *   现象：深睡被唤醒后按键**全部失灵**（无法触发任何映射），而冷启动那一档按键是好的。
-     *   机理（源码已核实）：rtc_gpio_init() 只做 function_select(…, RTCIO_LL_FUNC_RTC)
-     *   （esp_driver_gpio/src/rtc_io.c:54）把焊盘切到 RTC 功能；IDF 自己的
-     *   ext1_wakeup_prepare() 也会做同样的事（sleep_modes.c:2063）。而该选择位位于 RTC 域，
-     *   **深睡时 RTC 域不掉电、唤醒后也不复位** → 复位之后键脚仍挂在 RTC 上，数字 GPIO
-     *   （也就是 keyboard_button 驱动）根本读不到它 → 按键彻底失灵。
-     *   冷启动是上电复位，RTC 域一并复位，所以那一档按键正常 —— 与实测现象完全吻合。
-     *   修复：rtc_gpio_deinit()（rtc_io.c:60，切回 RTCIO_LL_FUNC_DIGITAL）。
-     *   无条件调用（冷启动时等价于空操作）；顺便把"切之前 / 切之后"的数字电平落盘，
-     *   给上面的机理留一份直接证据。 */
+    /*!< ---- 【本轮核心修复③】把两个键脚从"RTC 复用 + hold 锁存"里彻底放回数字域 ----
+     *   现象：深睡被唤醒后按键**全部失灵**（无灯效、不触发映射），而冷启动那一档正常。
+     *   有两层原因叠在一起，都在 RTC 域、且**深睡时不掉电、唤醒后不复位**：
+     *     ① 功能复用位：rtc_gpio_init() 只做 function_select(…, RTCIO_LL_FUNC_RTC)
+     *        （esp_driver_gpio/src/rtc_io.c:54）；IDF 的 ext1_wakeup_prepare()
+     *        也做同样的事（sleep_modes.c:2063）。
+     *     ② hold 锁存位：同一个 ext1_wakeup_prepare() 在"RTC_PERIPH 会掉电"时
+     *        还会 rtcio_hal_hold_enable(rtc_pin)（sleep_modes.c:2066-2070）。
+     *        被 hold 的输入引脚电平会被**冻结**，键盘驱动的低电平中断永远不来，
+     *        而 gpio_get_level() 仍读到冻结的旧值（1）—— 正好解释
+     *        上一轮日志里 pre/post 都是 (1,1) 却按不动键。
+     *   ⚠️ 关键：rtc_gpio_deinit() **只清复用位、不清 hold**，所以必须显式
+     *      rtc_gpio_hold_dis() / gpio_hold_dis()。
+     *   顺序也重要：先清 hold → 再切回数字复用 → 最后配数字上拉，让数字配置落在最后。
+     *   无条件执行（冷启动时等价于空操作）。 */
     {
+        /*!< 先**原样**读一遍基线（不做任何配置变更）：
+         *   · rtcp = RTC 通路电平（引脚若停在 RTC 复用上，只有这条路读得到真实值）
+         *   · digp = 数字通路电平（复用没切回来时数字侧读不到 → 常见为 0）
+         *   之后才是 diga = 修复后的数字电平。digp=0 而 diga=1 即坐实机理 ①。 */
+        const int rtcp0  = (int)rtc_gpio_get_level(GPIO_NUM_0);
+        const int rtcp17 = (int)rtc_gpio_get_level(GPIO_NUM_17);
+        const int digp0  = gpio_get_level(GPIO_NUM_0);
+        const int digp17 = gpio_get_level(GPIO_NUM_17);
+
+        rtc_gpio_hold_dis(GPIO_NUM_0); /*!< 清 hold（RTC 域锁存，跨深睡保留） */
+        rtc_gpio_hold_dis(GPIO_NUM_17);
+        gpio_hold_dis(GPIO_NUM_0);
+        gpio_hold_dis(GPIO_NUM_17);
+        rtc_gpio_deinit(GPIO_NUM_0); /*!< 复用切回 DIGITAL（rtc_io.c:60） */
+        rtc_gpio_deinit(GPIO_NUM_17);
+
         gpio_config_t key_cfg = {
             .pin_bit_mask = (1ULL << GPIO_NUM_0) | (1ULL << GPIO_NUM_17),
             .mode         = GPIO_MODE_INPUT,
@@ -3393,16 +3501,9 @@ void app_main(void)
             .intr_type    = GPIO_INTR_DISABLE,
         };
         gpio_config(&key_cfg);
-        const int pre0  = gpio_get_level(GPIO_NUM_0);
-        const int pre17 = gpio_get_level(GPIO_NUM_17);
-        rtc_gpio_deinit(GPIO_NUM_0);
-        rtc_gpio_deinit(GPIO_NUM_17);
         vTaskDelay(pdMS_TO_TICKS(5));
-        const int post0  = gpio_get_level(GPIO_NUM_0);
-        const int post17 = gpio_get_level(GPIO_NUM_17);
-        /*!< pre 为 0 而 post 为 1（键没按着时）就坐实了上面的机理。 */
-        diag_log_event("KEYMUX pre(%d,%d) post(%d,%d) rst=%d", pre0, pre17, post0, post17,
-                       (int)esp_reset_reason());
+        diag_log_event("KEYMUX rtcp(%d,%d) digp(%d,%d) diga(%d,%d) rst=%d", rtcp0, rtcp17, digp0, digp17,
+                       gpio_get_level(GPIO_NUM_0), gpio_get_level(GPIO_NUM_17), (int)esp_reset_reason());
     }
 
     /*!< Init keyboard key monitor */
