@@ -282,6 +282,25 @@ void diag_log_clear(void)
     nvs_close(h);
 }
 
+void diag_note_dip_view(int switch_pos, int derived, int raw_ble, int raw_wifi)
+{
+    static int last_switch  = -999;
+    static int last_derived = -999;
+
+    /*!< update_device_status() 以 ~2Hz 运行，只在"结论发生变化"时落盘：
+     *   不加节流会立刻吃满单次开机的追加配额（LOG_MAX_APPENDS=60），
+     *   而且每次 set_str 都是对 flash 的写入。结论稳定时最多记一两行，
+     *   这一两行恰好就是判断"switch_pos 与硬件实际档位是否分歧"所需的证据。 */
+    if (switch_pos == last_switch && derived == last_derived) {
+        return;
+    }
+    last_switch  = switch_pos;
+    last_derived = derived;
+
+    diag_log_event("VIEW  sw_pos=%d derived=%d raw(%d,%d) uptime=%llds %s", switch_pos, derived, raw_ble, raw_wifi,
+                   (long long)(esp_timer_get_time() / 1000000), (switch_pos == derived) ? "MATCH" : "MISMATCH");
+}
+
 static void diag_task(void *arg)
 {
     (void)arg;

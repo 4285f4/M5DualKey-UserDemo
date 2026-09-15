@@ -104,3 +104,21 @@ char *diag_log_load(void);
 
 /** 清空 NVS 事件日志。 */
 void diag_log_clear(void);
+
+/**
+ * @brief 记录一次"网页显示用档位"的派生结果，用于排查显示与实际档位不一致。
+ *
+ * 背景（2026-09-15 实测）：设备实物在 WiFi 档，网页收到的 dip_switch_pos 却是 0
+ * （中间档），而同一时刻两路原始采样明确显示 WiFi 通道越过了阈值。为把
+ * "档位判定值 switch_pos"与"由原始 ADC 派生的显示值"的分歧留住证据，在
+ * update_device_status() 里调用本函数。
+ *
+ * 内部按"结论是否变化"节流：该函数会被 ~2Hz 调用，不加节流会瞬间吃满单次
+ * 开机的追加配额（60 行）并白白磨损 flash。
+ *
+ * @param switch_pos  全局档位判定值 (0=center 1=wifi 2=ble)
+ * @param derived     由 switch_1_value / switch_2_value 派生出的档位
+ * @param raw_ble     BLE 通道原始值
+ * @param raw_wifi    WiFi 通道原始值
+ */
+void diag_note_dip_view(int switch_pos, int derived, int raw_ble, int raw_wifi);

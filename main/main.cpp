@@ -1791,24 +1791,35 @@ static void websocket_send_status(void)
 // 更新设备状态
 static void update_device_status(void)
 {
-    // 更新拨码开关位置
-    if (sys_param) {
-        switch (switch_pos) {
-            case 0:
-                // g_device_status.usb_mode = 0;
-                g_device_status.dip_switch_pos = 0;  // center
-                break;
-            case 1:
-                // g_device_status.usb_mode = 1;
-                g_device_status.dip_switch_pos = 1;  // left
-                break;
-            case 2:
-                // g_device_status.usb_mode = 2;
-                g_device_status.dip_switch_pos = 2;  // right
-                break;
-            default:
-                break;
+    /*!< 更新拨码开关位置 —— 由两路原始 ADC 通道直接派生，不再采信 switch_pos。
+     *
+     *   为什么改（2026-09-15 实测）：设备实物在 WiFi 档时，网页收到的
+     *   dip_switch_pos 却是 0（中间档），而同一次报文里的原始采样是
+     *   switch_1=92 / switch_2=2983 —— WiFi 通道明显越过阈值 2000。
+     *   即 switch_pos 与硬件实际状态可以长期不一致，而这两路原始值是
+     *   adc_switch_task 每秒直读的，永远跟硬件一致。
+     *
+     *   只在休眠未开启时采信原始值：light sleep 生效后（仅蓝牙档启用）ADC 会
+     *   系统性塌陷到 ~1V，读数不可信。蓝牙档不启动网页服务，这段代码在那时
+     *   本来也不可达 —— 加这道判断只是为了让上报值在任何情况下都不撒谎。
+     *
+     *   功能不受影响：设备行为由开机快照 ble_only_mode 与 dip_switch_wifi_enabled()
+     *   决定，本函数只负责网页显示用的那个字段。 */
+    if (!g_light_sleep_on) {
+        if (g_device_status.switch_1_value > DIP_SWITCH_ADC_THRESHOLD) {
+            g_device_status.dip_switch_pos = DIP_SWITCH_POS_BLE;
+        } else if (g_device_status.switch_2_value > DIP_SWITCH_ADC_THRESHOLD) {
+            g_device_status.dip_switch_pos = DIP_SWITCH_POS_WIFI;
+        } else if (g_device_status.switch_1_value > 0 || g_device_status.switch_2_value > 0) {
+            /*!< 两路都低于阈值、但至少一路有真实采样（不是全 0 的"尚未采样"）
+             *   → 这才是真正的中间 OFF 档。 */
+            g_device_status.dip_switch_pos = DIP_SWITCH_POS_CENTER;
         }
+        /*!< 取证：把"档位判定值 switch_pos"与"派生显示值"的分歧记进 NVS 事件
+         *   日志（内部按结论变化节流），下次读 /diag 就能看出分歧时 switch_pos
+         *   到底是什么值。 */
+        diag_note_dip_view(switch_pos, g_device_status.dip_switch_pos, g_device_status.switch_1_value,
+                           g_device_status.switch_2_value);
     }
 
     // 更新电池状态 (使用test_case.c中的真实数据)
