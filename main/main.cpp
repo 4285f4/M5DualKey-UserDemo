@@ -2208,9 +2208,12 @@ static void device_status_task(void *pvParameters)
          *   在插回线后依然有效。于是在 VBUS 上升沿后延迟几秒打一次快照。
          *   ⚠️ 纯 RAM、不写 flash —— 运行期写 NVS 正是上一轮 INT WDT 崩溃的根因。 */
         {
-            static int vbus_prev    = -1;
-            static int vbus_dump_cd = 0;
-            const int  vbus_now     = g_usb_connected ? 1 : 0;
+#define PERIODIC_DUMP_S 20
+            static int      vbus_prev    = -1;
+            static int      vbus_dump_cd = 0;
+            static uint32_t per_dump_cd  = PERIODIC_DUMP_S;
+            const int       vbus_now     = g_usb_connected ? 1 : 0;
+            bool            want_dump    = false;
             if (vbus_prev < 0) {
                 vbus_prev = vbus_now; /*!< 开机首轮只记基线（开机时插着线也不该刷） */
             } else if (vbus_now && !vbus_prev) {
@@ -2220,6 +2223,20 @@ static void device_status_task(void *pvParameters)
             }
             vbus_prev = vbus_now;
             if (vbus_dump_cd > 0 && --vbus_dump_cd == 0) {
+                want_dump = true;
+            }
+            /*!< ⚠️ 2026-09-15 夜 第二次实测：**上升沿触发被证明不可靠** —— 用户拔线
+             *   2 分钟期间本任务没能观测到 VBUS 掉电（`vbus_prev` 插回后仍是 1），
+             *   沿从未出现，快照一次都没打，拔线期的延迟数据全部丢失。
+             *   ⇒ 改为**无条件周期快照**：只要任务在跑、插回线后有主机可读，最迟
+             *   `PERIODIC_DUMP_S` 秒内必然把拔线期累积的 RAM 计数打出来，不依赖任何沿。
+             *   无主机时写入会被内核直接丢弃（`usb_serial_jtag_write()` 首行
+             *   `if (!is_connected()) return -1;`）⇒ 代价≈0，且**不写 flash**。 */
+            if (--per_dump_cd == 0) {
+                per_dump_cd = PERIODIC_DUMP_S;
+                want_dump   = true;
+            }
+            if (want_dump) {
                 btn_latency_stats_t lat;
                 btn_progress_get_latency_stats(&lat);
                 ESP_LOGW(TAG,
