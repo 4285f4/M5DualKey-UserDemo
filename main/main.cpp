@@ -2200,6 +2200,46 @@ static void device_status_task(void *pvParameters)
             update_power_status(NULL);
         }
         tick++;
+        /*!< ── 拔线期时序取证（2026-09-16 加）───────────────────────────────
+         *   取证上的死结：控制台走 USB-Serial-JTAG，**只有插着线才读得到**；而
+         *   light sleep 只在拔线时生效（插线时 USJ 持 NO_LIGHT_SLEEP 锁）⇒
+         *   "有 light sleep 时的时序数据"与"可读的控制台"天然互斥。
+         *   破解点：**插拔 USB 不重启芯片**（电池供电）⇒ 拔线期间累积的 RAM 计数器
+         *   在插回线后依然有效。于是在 VBUS 上升沿后延迟几秒打一次快照。
+         *   ⚠️ 纯 RAM、不写 flash —— 运行期写 NVS 正是上一轮 INT WDT 崩溃的根因。 */
+        {
+            static int vbus_prev    = -1;
+            static int vbus_dump_cd = 0;
+            const int  vbus_now     = g_usb_connected ? 1 : 0;
+            if (vbus_prev < 0) {
+                vbus_prev = vbus_now; /*!< 开机首轮只记基线（开机时插着线也不该刷） */
+            } else if (vbus_now && !vbus_prev) {
+                vbus_dump_cd = 3;     /*!< 插上线后再等 3s，避开 USB 枚举窗口 */
+            } else if (!vbus_now) {
+                vbus_dump_cd = 0;
+            }
+            vbus_prev = vbus_now;
+            if (vbus_dump_cd > 0 && --vbus_dump_cd == 0) {
+                btn_latency_stats_t lat;
+                btn_progress_get_latency_stats(&lat);
+                ESP_LOGW(TAG,
+                         "BATLAT edge->cb last=%ums max=%ums cnt=%u | ble send last=%ums max=%ums cnt=%u | "
+                         "usb send max=%ums | tap last/max=%u/%ums cnt=%u | longfire=%ums cbdown=%u gap=%ums",
+                         (unsigned)g_key_edge_ms_last, (unsigned)g_key_edge_ms_max, (unsigned)g_key_edge_cnt,
+                         (unsigned)lat.ble_send_ms_last, (unsigned)lat.ble_send_ms_max, (unsigned)lat.ble_send_cnt,
+                         (unsigned)lat.usb_send_ms_max, (unsigned)lat.tap_hold_ms_last,
+                         (unsigned)lat.tap_hold_ms_max, (unsigned)lat.tap_count, (unsigned)lat.long_fire_ms_last,
+                         (unsigned)lat.cb_down_count, (unsigned)lat.cb_gap_ms_max);
+                char *rt = diag_rt_report();
+                if (rt != NULL) {
+                    char *save = NULL;
+                    for (char *ln = strtok_r(rt, "\n", &save); ln != NULL; ln = strtok_r(NULL, "\n", &save)) {
+                        ESP_LOGW(TAG, "BATRT %s", ln);
+                    }
+                    free(rt);
+                }
+            }
+        }
         /*!< ---- 诊断取证（见函数头说明）----
          *   🔴 2026-09-15 现场定案：这四条**只打控制台，绝不落 NVS**。
          *   证据链：串口 ROM `rst:0x8 (TG1WDT_SYS_RST)` + NVS `reason=5`，两者都是
@@ -2426,8 +2466,72 @@ static void key_flash_render(void)
     }
 }
 
+/*!< ── 按键活跃期"禁睡锁"（2026-09-16 加）────────────────────────────────
+ *
+ *   症状：蓝牙档（light sleep 生效）静置后再按键，延迟明显；而**同一个连接参数**
+ *   （latency 20 / 15ms）在 WiFi 档、或蓝牙档插着 USB 时都完全正常。
+ *
+ *   判据：插着 USB 时 IDF 的 USB-Serial-JTAG 会持一把 NO_LIGHT_SLEEP 锁
+ *   （esp_driver_usb_serial_jtag/.../usb_serial_jtag_connection_monitor.c），
+ *   芯片**根本不会进 light sleep** ⇒ 那份"正常"与连接参数无关。
+ *   于是两组的唯一差异就是：**上报发出时，芯片是不是刚从 light sleep 醒来**。
+ *
+ *   机理：light sleep 会停掉整个数字域，BLE 控制器醒来后要重新对齐连接事件锚点，
+ *   报告虽然已经在协议栈里，却要等到下一个锚点才发得出去 —— 用户侧就是延迟。
+ *   这也解释了为什么"围绕 light sleep 反复修但修不到点上"：它确实是根因，
+ *   只是不该用"改连接参数"或"关掉休眠"来处理。
+ *
+ *   对策：只在**用户真正按键的这段时间**拿住 ESP_PM_NO_LIGHT_SLEEP，并在最后一次
+ *   按键回调后保留 KBD_KEEPAWAKE_TAIL_MS 的尾巴（覆盖"按下 → 松开 → 补发点按"
+ *   整条链路）。静置时照旧休眠 ⇒ 对实测 ~3.3mA 的静置电流几乎无影响。
+ *
+ *   ⚠️ 只能在任务上下文调用（keyboard_cb 跑在 kbd_task 里；esp_pm_lock_acquire
+ *      内部可能走互斥量/IPC，不能在 ISR 里调用）。 */
+#define KBD_KEEPAWAKE_TAIL_MS 1500
+
+static esp_pm_lock_handle_t s_kbd_pm_lock       = NULL;
+static esp_timer_handle_t   s_kbd_pm_timer      = NULL;
+static volatile int64_t     s_kbd_awake_until_us = 0;
+static bool                 s_kbd_pm_held        = false;
+
+static void kbd_keepawake_timeout(void *arg);
+
+/*!< 每次按键回调都调一次：把"保持清醒"的截止时刻往后推，必要时重新拿锁。 */
+static void kbd_keepawake_refresh(void)
+{
+    if (s_kbd_pm_lock == NULL || s_kbd_pm_timer == NULL) {
+        return;
+    }
+    s_kbd_awake_until_us = esp_timer_get_time() + (int64_t)KBD_KEEPAWAKE_TAIL_MS * 1000;
+    if (!s_kbd_pm_held) {
+        s_kbd_pm_held = true;
+        esp_pm_lock_acquire(s_kbd_pm_lock);
+    }
+    esp_timer_stop(s_kbd_pm_timer);
+    esp_timer_start_once(s_kbd_pm_timer, (uint64_t)KBD_KEEPAWAKE_TAIL_MS * 1000);
+}
+
+/*!< 尾巴到期：若期间又被按键刷新过，就按新区间再排一次，否则放锁。 */
+static void kbd_keepawake_timeout(void *arg)
+{
+    (void)arg;
+    int64_t left = s_kbd_awake_until_us - esp_timer_get_time();
+    if (left > 0) {
+        if (left > (int64_t)KBD_KEEPAWAKE_TAIL_MS * 1000) {
+            left = (int64_t)KBD_KEEPAWAKE_TAIL_MS * 1000; /*!< 防撕裂读出的异常大值 */
+        }
+        esp_timer_start_once(s_kbd_pm_timer, (uint64_t)left);
+        return;
+    }
+    if (s_kbd_pm_held) {
+        s_kbd_pm_held = false;
+        esp_pm_lock_release(s_kbd_pm_lock);
+    }
+}
+
 static void keyboard_cb(keyboard_btn_handle_t kbd_handle, keyboard_btn_report_t kbd_report, void *user_data)
 {
+    kbd_keepawake_refresh(); /*!< 必须在最前面：锁要在上报发出之前拿住 */
     ESP_LOGI(TAG, "keyboard_cb: pressed=%ld, released=%ld, changed=%d", kbd_report.key_pressed_num,
              kbd_report.key_release_num, kbd_report.key_change_num);
     g_key_cb_count++; /*!< 诊断：驱动层确实回调了（见文件头部计数说明） */
@@ -3831,6 +3935,24 @@ void app_main(void)
              *   g_light_sleep_on 保持 false ⇒ update_device_status() 会采信原始拨码
              *   读数（此时读数本来就可信），语义正确。 */
             ESP_LOGW(TAG, "BLE-only: auto light sleep DISABLED by config (网页开关)");
+        }
+
+        /*!< 按键活跃期"禁睡锁"的创建（详细说明见 keyboard_cb 上方那段注释）。
+         *   放在这一档里是因为延迟症状只在蓝牙档出现；其它档 light sleep 本就没开，
+         *   拿这把锁是空操作。失败不致命 —— 退化成"没有这层保护"，不影响原有行为。 */
+        if (s_kbd_pm_lock == NULL) {
+            const esp_err_t lk_ret = esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "kbdawake", &s_kbd_pm_lock);
+            const esp_timer_create_args_t kw_args = {
+                .callback = kbd_keepawake_timeout,
+                .name     = "kbdawake_t",
+            };
+            const esp_err_t tm_ret = esp_timer_create(&kw_args, &s_kbd_pm_timer);
+            ESP_LOGI(TAG, "kbd keep-awake lock: pm=%s timer=%s tail=%dms", esp_err_to_name(lk_ret),
+                     esp_err_to_name(tm_ret), KBD_KEEPAWAKE_TAIL_MS);
+            if (lk_ret != ESP_OK || tm_ret != ESP_OK) {
+                s_kbd_pm_lock  = NULL;
+                s_kbd_pm_timer = NULL;
+            }
         }
     }
 

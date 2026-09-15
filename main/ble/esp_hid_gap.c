@@ -255,12 +255,19 @@ static void ble_gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_p
                      param->phy_update.rx_phy);
             break;
         case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
-            ESP_LOGI(TAG, "BLE GAP UPDATE_CONN_PARAMS  min:%d max: %d status:%d", param->update_conn_params.min_int,
-                     param->update_conn_params.max_int, param->update_conn_params.status);
-            /*!< 取证：实际协商出来的连接间隔（单位 1.25ms）。间隔越短，休眠/共存下
-             *   漏连接事件导致监督超时的概率越高。 */
+            /*!< 2026-09-16：补打 latency / 实际连接间隔 / 监督超时。
+             *   原来只打 min/max/status，导致"宿主到底采信了哪一组参数"一直无从判断 ——
+             *   而连接间隔 ×(latency+1) 正是休眠态下"多久才轮到一个发送窗口"的上界。 */
+            ESP_LOGI(TAG, "BLE GAP UPDATE_CONN_PARAMS status:%d int_min:%d int_max:%d latency:%d cur_int:%dms tmo:%d",
+                     param->update_conn_params.status, param->update_conn_params.min_int,
+                     param->update_conn_params.max_int, param->update_conn_params.latency,
+                     param->update_conn_params.conn_int, param->update_conn_params.timeout);
+            /*!< 取证：实际协商出来的连接间隔（单位 1.25ms）＋ 从机延迟。
+             *   b/c 打包成 "latency<<16 | conn_int(ms)"，避免为多打两个值多占一条环形记录。 */
             diag_rt_push(DIAG_RT_BLE_CONNPARAM, (int)param->update_conn_params.status,
-                         (int)param->update_conn_params.min_int, (int)param->update_conn_params.max_int, 0);
+                         (int)(((uint32_t)param->update_conn_params.latency << 16) |
+                               ((uint32_t)param->update_conn_params.conn_int & 0xFFFFu)),
+                         (int)param->update_conn_params.max_int, (int)param->update_conn_params.timeout);
             break;
         default:
             ESP_LOGI(TAG, "BLE GAP EVENT %d", event);
