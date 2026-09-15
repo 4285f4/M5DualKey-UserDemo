@@ -475,6 +475,25 @@ bool btn_progress_has_pressed_key(void)
     return s_keys_down > 0;
 }
 
+/*!< 热力图淡出的"快渲染窗口"。
+ *
+ *   背景：light_progress_task 空闲时按 200ms 渲染一次（为 light sleep 省唤醒），
+ *   但 typing_heatmap 的衰减是"**每次渲染**减一个定值"（typing_heatmap_anim.h:96），
+ *   与渲染周期无关。于是空闲周期一从 50ms 拉到 200ms，淡出就慢了 4 倍；而按下时
+ *   才是 10ms —— 结果一次短按（物理按住 ~100ms）松开后，那颗灯要十几秒才熄灭，
+ *   观感就是"按一下就常亮"，再按一下改的是热力值/色相，于是又"换颜色"。
+ *
+ *   这里记录最近一次按键事件的时刻，让渲染任务在热力散尽前保持 10ms 快节奏；
+ *   散尽后自然回到 200ms，light sleep 的省电收益不受影响（按键是用户主动行为，
+ *   其后 1.2s 内多几次唤醒无关功耗大局）。 */
+#define LED_ANIM_SETTLE_MS 1200
+static int64_t s_last_key_event_us = INT64_MIN / 4;
+
+bool btn_progress_led_anim_active(void)
+{
+    return (esp_timer_get_time() - s_last_key_event_us) < ((int64_t)LED_ANIM_SETTLE_MS * 1000);
+}
+
 void btn_progress(keyboard_btn_report_t kbd_report)
 {
     static uint8_t layer         = 1;
@@ -489,6 +508,8 @@ void btn_progress(keyboard_btn_report_t kbd_report)
     sys_param_t *sys_param       = settings_get_parameter();
 
     s_keys_down = kbd_report.key_pressed_num;
+    /*!< 有任何按键事件就把灯效快渲染窗口续上（含松手那次，淡出从这里开始计时）。 */
+    s_last_key_event_us = esp_timer_get_time();
 
     /*!< 时延取证：统计"按住期间"相邻回调的间隔。扫描周期是 1ms，若这里出现几十上百
      *   ms，说明扫描任务（或本回调所在的任务）被长时间饿过 —— 这正是"边沿晚检出"

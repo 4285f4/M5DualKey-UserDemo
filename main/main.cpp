@@ -2122,7 +2122,8 @@ static void keyboard_cb(keyboard_btn_handle_t kbd_handle, keyboard_btn_report_t 
  *   按键上报不依赖本任务轮询（keyboard_cb 由 GPIO 中断边沿驱动，s_keys_down 在
  *   回调里同步更新），所以空闲期拉长不影响按键手感；空闲 200ms 只是让长按"到点
  *   触发"最多晚一个心跳（长按阈值本身是数百 ms 级，长度按绝对时间戳计算，不会
- *   累积误差）；有键按下时立刻回到 10ms，保证长按判定精度与热力图淡出效果。
+ *   累积误差）；有键按下、或刚松手不久（热力图尚未淡完）时回到 10ms，
+ *   保证长按判定精度与热力图淡出效果。
  *   在 light sleep 下本任务的每个心跳周期都对应一次唤醒，200ms 把这里的唤醒
  *   频率从 20/s 降到 5/s。 */
 #define LIGHT_TASK_PERIOD_IDLE_MS 200
@@ -2136,8 +2137,11 @@ static void light_progress_task(void *pvParameters)
         }
         /*!< 顺便作为心跳：检查长按是否已到阈值（方案A：到点即触发） */
         btn_progress_tick();
-        vTaskDelay((btn_progress_has_pressed_key() ? LIGHT_TASK_PERIOD_ACTIVE_MS : LIGHT_TASK_PERIOD_IDLE_MS) /
-                   portTICK_PERIOD_MS);
+        /*!< 快节奏的条件除了"键还按着"，还要算上"刚松手不久"：热力图的衰减是每次渲染
+         *   减一个定值，若一松手就掉回 200ms，淡出会慢 20 倍，观感变成"按一下就常亮"。
+         *   见 btn_progress_led_anim_active()。 */
+        const bool fast_period = btn_progress_has_pressed_key() || btn_progress_led_anim_active();
+        vTaskDelay((fast_period ? LIGHT_TASK_PERIOD_ACTIVE_MS : LIGHT_TASK_PERIOD_IDLE_MS) / portTICK_PERIOD_MS);
     }
 }
 

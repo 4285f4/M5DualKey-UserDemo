@@ -245,9 +245,18 @@ uint16_t btn_progress_get_long_press_ms(void);
 
 /**
  * @brief 最近一次上报中是否有键处于按下状态。
- *        灯效任务用它决定心跳周期（空闲 50ms / 有键 10ms）以配合 light sleep。
+ *        灯效任务用它决定心跳周期（空闲 200ms / 有键 10ms）以配合 light sleep。
  */
 bool btn_progress_has_pressed_key(void);
+
+/**
+ * @brief 最近是否发生过按键事件（含刚松手的那一次），用于让灯效保持快渲染。
+ *
+ *        热力图淡出是"每次渲染衰减一个定值"，空闲 200ms 的渲染周期会让淡出慢 20 倍
+ *        （按一下就常亮）。灯效任务据此在按键后 LED_ANIM_SETTLE_MS 内继续用 10ms 周期。
+ *        无按键活动时返回 false，省电行为不变。
+ */
+bool btn_progress_led_anim_active(void);
 
 #ifdef __cplusplus
 }
