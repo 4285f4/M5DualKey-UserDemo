@@ -26,6 +26,7 @@ extern "C" {
 #include "adc_detect.h"
 #include "diag_power.h"
 #include "driver/gpio.h"
+#include "driver/rtc_io.h"
 #include "chain_bus.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
@@ -95,6 +96,33 @@ bool g_usb_mapping_enabled = true;
 bool g_ble_mapping_enabled = true;
 uint8_t g_connect_status   = 0;      // 0:未连接, 1:连接中, 2:已连接
 bool g_ble_adv_status      = false;  // 蓝牙广播状态: false=未广播, true=正在广播
+
+/*!< ========================= 自动关机（仅蓝牙档） =========================
+ *
+ *   用户诉求：蓝牙档长时间没有主机连接时，不能一直广播耗电。
+ *   方案（2026-09-15 用户拍板）：无连接持续超过设定时长 → 闪灯提示 → 深度睡眠。
+ *   · 超时可网页设置（1~120 分钟，0 = 关闭），默认 15 分钟；
+ *   · **只在这一档生效**：唯一调用点 auto_off_tick() 挂在 device_status_task 上，
+ *     而该任务只在蓝牙档创建；
+ *   · 插着 USB 时不算空闲 —— 那时没有耗电之忧，且要保住充电电量指示；
+ *   · 唤醒 = 按任一键（GPIO0/17 拉低），或拨档（经中间档必然断电，等于重新上电）。
+ *     深睡唤醒即重启，这是用户已知并接受的语义。
+ *
+ *   ⚠️ NVS 用独立 namespace/key，不动 settings.c 的 sys_param blob —— 那是个定长
+ *   blob，往里加字段会让已烧录设备上的旧 blob 直接读取失败
+ *   （nvs_get_blob 返回 ESP_ERR_NVS_INVALID_LENGTH）。
+ *   ⚠️ 写 NVS 只发生在网页下发配置时（用户触发、极低频），不走任何周期性路径 ——
+ *   本项目已两次因"高频路径写 flash"翻车。
+ */
+#define AUTO_OFF_NVS_NS      "power_cfg"
+#define AUTO_OFF_NVS_KEY     "auto_off_min"
+#define AUTO_OFF_DEFAULT_MIN 15
+#define AUTO_OFF_MAX_MIN     120
+
+static uint16_t g_auto_off_min = AUTO_OFF_DEFAULT_MIN;
+
+/*!< 当前"无连接"已持续秒数（file scope 便于 /diag 观测；判定逻辑见 auto_off_tick）。 */
+static uint32_t s_auto_off_idle_s = 0;
 
 /*!< DIP switch (BLE / OFF / WIFI)
  *   蓝牙档(网页显示 right, 即 SWITCH_1/GPIO8)只开启蓝牙以省电, 其余档位维持蓝牙 + WiFi
@@ -286,6 +314,12 @@ static void websocket_task(void *pvParameters);
 static void device_status_task(void *pvParameters);
 static void power_indicator_task(void *pvParameters);
 static void update_device_status(void);
+
+// 自动关机（仅蓝牙档）：超时配置 + 深睡入口
+static void auto_off_config_load(void);
+static void auto_off_config_save(uint16_t minutes);
+static void auto_off_tick(void);
+static void power_enter_deep_sleep(void) __attribute__((noreturn));
 
 // RGB颜色控制函数声明
 static void set_key_rgb_color_locked(int key_index, uint32_t rgb_color);
@@ -549,12 +583,13 @@ static esp_err_t diag_get_handler(httpd_req_t *req)
                  "long  fire  : last %u ms   count %u\n"
                  "hold cb gap : max %u ms    (%u callbacks while key was down)\n"
                  "hid send usb: last %u ms   max %u ms   count %u\n"
-                 "hid send ble: last %u ms   max %u ms   count %u\n",
+                 "hid send ble: last %u ms   max %u ms   count %u\n"
+                 "auto off    : %u min (0=off)   idle %u s   (BLE 档无连接判定)\n",
                  (unsigned)lat.tap_hold_ms_last, (unsigned)lat.tap_hold_ms_max, (unsigned)lat.tap_count,
                  (unsigned)lat.long_fire_ms_last, (unsigned)lat.long_count, (unsigned)lat.cb_gap_ms_max,
                  (unsigned)lat.cb_down_count, (unsigned)lat.usb_send_ms_last, (unsigned)lat.usb_send_ms_max,
                  (unsigned)lat.usb_send_cnt, (unsigned)lat.ble_send_ms_last, (unsigned)lat.ble_send_ms_max,
-                 (unsigned)lat.ble_send_cnt);
+                 (unsigned)lat.ble_send_cnt, (unsigned)g_auto_off_min, (unsigned)s_auto_off_idle_s);
     }
 
     if (txt == NULL && boot == NULL && log == NULL && lat_txt == NULL) {
@@ -684,6 +719,27 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                             refresh_key_colors_from_status();
                             vTaskDelay(20 / portTICK_PERIOD_MS);
                             refresh_key_colors_from_status();
+                        }
+                    }
+                } else if (strcmp(type->valuestring, "set_auto_off") == 0) {
+                    /*!< 自动关机超时（仅蓝牙档生效）。minutes 单位分钟，0 = 关闭，
+                     *   上限 AUTO_OFF_MAX_MIN(120)。这里写 NVS 是安全的：只在用户
+                     *   操作网页时发生，不是周期性路径。 */
+                    cJSON *minutes_item = cJSON_GetObjectItem(json, "minutes");
+                    if (minutes_item != NULL && cJSON_IsNumber(minutes_item)) {
+                        int minutes = minutes_item->valueint;
+                        if (minutes < 0) {
+                            minutes = 0;
+                        }
+                        if (minutes > AUTO_OFF_MAX_MIN) {
+                            minutes = AUTO_OFF_MAX_MIN;
+                        }
+                        auto_off_config_save((uint16_t)minutes);
+                        /*!< 立刻回推一次状态，让网页那个数字框尽快拿到落定值，
+                         *   不必等下一个 500ms 周期（减少"改了又跳回去"的观感）。 */
+                        if (status_refresh_queue != NULL) {
+                            status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
+                            xQueueSend(status_refresh_queue, &refresh_msg, 0);
                         }
                     }
                 } else if (strcmp(type->valuestring, "get_status") == 0) {
@@ -1463,6 +1519,8 @@ static void websocket_send_status(void)
     cJSON_AddBoolToObject(dualkey, "ble_mapping_enabled", g_ble_mapping_enabled);
     // 按键灯效开关（读 rgb_matrix 的 enable 位；该值本身已由 rgb_matrix 持久化在 NVS）
     cJSON_AddBoolToObject(dualkey, "key_led_effect_enabled", rgb_matrix_is_enabled());
+    // 自动关机超时（分钟，0 = 关闭）；只在蓝牙档真正生效
+    cJSON_AddNumberToObject(dualkey, "auto_off_min", g_auto_off_min);
 
     // 自定义映射状态
     cJSON_AddBoolToObject(dualkey, "custom_mapping_enabled", btn_progress_is_custom_mapping_enabled());
@@ -2022,6 +2080,9 @@ static void device_status_task(void *pvParameters)
             update_power_status(NULL);
         }
         tick++;
+        /*!< 自动关机检查（仅本任务存在，即仅蓝牙档）。周期约 1s，
+         *   所以超时精度是 ±1s 量级 —— 对"分钟"级超时完全够用。 */
+        auto_off_tick();
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
@@ -2317,6 +2378,131 @@ static void power_indicator_task(void *pvParameters)
              *   原为 300ms，在 light sleep 下等于每秒多 2.3 次无用唤醒。 */
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
+    }
+}
+
+/*!< 自动关机：超时配置与深睡入口。常量与 g_auto_off_min 见文件头部全局区。 */
+
+static void auto_off_config_load(void)
+{
+    nvs_handle_t h = 0;
+    if (nvs_open(AUTO_OFF_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        ESP_LOGI(TAG, "自动关机: 无存档，用默认 %d 分钟", AUTO_OFF_DEFAULT_MIN);
+        return;
+    }
+    uint16_t v = AUTO_OFF_DEFAULT_MIN;
+    if (nvs_get_u16(h, AUTO_OFF_NVS_KEY, &v) == ESP_OK && v <= AUTO_OFF_MAX_MIN) {
+        g_auto_off_min = v;
+    }
+    nvs_close(h);
+    ESP_LOGI(TAG, "自动关机超时: %u 分钟 (0=关闭)", (unsigned)g_auto_off_min);
+}
+
+static void auto_off_config_save(uint16_t minutes)
+{
+    if (minutes > AUTO_OFF_MAX_MIN) {
+        minutes = AUTO_OFF_MAX_MIN;
+    }
+    g_auto_off_min = minutes;
+
+    nvs_handle_t h = 0;
+    if (nvs_open(AUTO_OFF_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGW(TAG, "自动关机: NVS 打开失败，本次仅内存生效");
+        return;
+    }
+    nvs_set_u16(h, AUTO_OFF_NVS_KEY, minutes);
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGI(TAG, "自动关机超时已保存: %u 分钟 (0=关闭)", (unsigned)minutes);
+}
+
+/*!< 深睡前的灯效提示：两颗灯快闪 3 次（约 0.9s）。
+ *   目的是把"设备主动睡了"和"设备死机了"区分开 —— 深睡唤醒 = 重启，当前状态会丢。
+ *   不受"按键灯效"开关约束（那是按键反馈的开关），但尊重板级 bsp_ws2812 使能。 */
+#define AUTO_OFF_BLINK_COUNT  3
+#define AUTO_OFF_BLINK_ON_MS  130
+#define AUTO_OFF_BLINK_OFF_MS 130
+#define AUTO_OFF_BLINK_COLOR  0x1E1E1E /*!< 暗白，与充电指示(红/琥珀/绿)、按键灯效(蓝)都区分得开 */
+
+static void auto_off_blink_warning(void)
+{
+    if (!bsp_ws2812_is_enable() || led_strip == NULL) {
+        return;
+    }
+    /*!< 必须先接管渲染：light_progress() 见到 overlay 才会跳过 rgb_matrix_task()，
+     *   否则它每 10~200ms 整条刷新一次，会把这里写的像素冲掉。 */
+    light_progress_set_flash_overlay(true);
+    for (int i = 0; i < AUTO_OFF_BLINK_COUNT; i++) {
+        light_progress_lock();
+        set_key_rgb_color_locked(0, AUTO_OFF_BLINK_COLOR);
+        set_key_rgb_color_locked(1, AUTO_OFF_BLINK_COLOR);
+        light_progress_unlock();
+        vTaskDelay(pdMS_TO_TICKS(AUTO_OFF_BLINK_ON_MS));
+
+        light_progress_lock();
+        set_key_rgb_color_locked(0, 0x000000);
+        set_key_rgb_color_locked(1, 0x000000);
+        light_progress_unlock();
+        vTaskDelay(pdMS_TO_TICKS(AUTO_OFF_BLINK_OFF_MS));
+    }
+}
+
+/*!< 进入深度睡眠；唤醒源 = 两个按键拉低（ext1, ANY_LOW）。
+ *
+ *   ⚠️ ESP32-S3 上**没有** SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP ——
+ *   esp_deep_sleep_enable_gpio_wakeup() 那个 API 只有 C2/C3/C5/C6/C61/H4/P4 有，
+ *   在 S3 上连声明都进不来（见 esp_sleep.h 的平台条件编译）。S3 只能走 ext0/ext1。
+ *   GPIO0 与 GPIO17 都在 S3 的 RTC 域（0~21）内。
+ *
+ *   ⚠️ 按键的上拉是**软件内部上拉**（components/keyboard_button/src/kbd_gpio.c 的
+ *   GPIO_PULLUP_ENABLE），休眠期 RTC_PERIPH 断电后必须靠 RTC IO 的上拉（+ HOLD 特性）
+ *   维持高电平；否则引脚浮空会被 ext1 判成"已拉低"而立刻唤醒（表现为"睡下马上就醒"）。 */
+static void power_enter_deep_sleep(void)
+{
+    ESP_LOGW(TAG, "无主机连接已超过 %u 分钟：闪灯提示后进入深度睡眠（按任一键唤醒）",
+             (unsigned)g_auto_off_min);
+
+    auto_off_blink_warning();
+
+    const uint64_t wake_mask = (1ULL << GPIO_NUM_0) | (1ULL << GPIO_NUM_17);
+    esp_err_t      err       = esp_sleep_enable_ext1_wakeup_io(wake_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+    if (err != ESP_OK) {
+        /*!< 不 abort：即使按键唤醒没配上，拨档经过中间档会断电，等于重新上电，
+         *   设备不会变砖。日志留证据即可。 */
+        ESP_LOGW(TAG, "ext1 唤醒配置失败 (%s)，将只能靠拨档重新上电唤醒", esp_err_to_name(err));
+    }
+    rtc_gpio_init(GPIO_NUM_0);
+    rtc_gpio_pulldown_dis(GPIO_NUM_0);
+    rtc_gpio_pullup_en(GPIO_NUM_0);
+    rtc_gpio_init(GPIO_NUM_17);
+    rtc_gpio_pulldown_dis(GPIO_NUM_17);
+    rtc_gpio_pullup_en(GPIO_NUM_17);
+
+    vTaskDelay(pdMS_TO_TICKS(50)); /*!< 让最后两条日志落出去 */
+
+    esp_deep_sleep_start();
+    __builtin_unreachable();
+}
+
+/*!< 空闲判定：只有"既没有主机连接、也没插 USB"才算空闲。
+ *
+ *   计数按 device_status_task 的循环走（约 1s 一次）；连接建立或插入 USB 都会清零。
+ *   **按键不重置计数**：这一档没连主机时按键本身不产生任何动作，按了也不代表在
+ *   使用设备，重置只会让"一直按着玩"永远不睡 —— 恰好背离要解决的问题。
+ *   （若将来想要"按键也算活动"，在这里加一个 btn_progress_has_pressed_key() 分支即可。） */
+static void auto_off_tick(void)
+{
+    if (g_auto_off_min == 0) { /*!< 网页里填 0 = 关闭 */
+        s_auto_off_idle_s = 0;
+        return;
+    }
+    if (g_connect_status == 2 || g_usb_connected) {
+        s_auto_off_idle_s = 0;
+        return;
+    }
+    s_auto_off_idle_s++;
+    if (s_auto_off_idle_s >= (uint32_t)g_auto_off_min * 60u) {
+        power_enter_deep_sleep();
     }
 }
 
@@ -2937,6 +3123,25 @@ void app_main(void)
     /*!< Read System config */
     settings_read_parameter_from_nvs();
     sys_param = settings_get_parameter();
+
+    /*!< 自动关机超时（独立 NVS namespace，见文件头部常量区）。
+     *   三档都读：虽然只有蓝牙档会用它，但只读一次的成本可以忽略，
+     *   而且这样以后要在别的档位启用不需要再动这里。 */
+    auto_off_config_load();
+
+    /*!< 唤醒原因：区分"冷启动"与"从自动关机深睡被按键唤醒"。
+     *   EXT1 唤醒时再打印具体是哪颗键，便于确认 ext1 配置真的生效了。 */
+    {
+        const esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+        if (cause == ESP_SLEEP_WAKEUP_EXT1) {
+            const uint64_t st = esp_sleep_get_ext1_wakeup_status();
+            ESP_LOGW(TAG, "从深度睡眠唤醒: EXT1, mask=0x%llx (bit0=Key1/GPIO0, bit17=Key2/GPIO17)",
+                     (unsigned long long)st);
+        } else {
+            ESP_LOGI(TAG, "启动/唤醒原因: %d (%s)", (int)cause,
+                     cause == ESP_SLEEP_WAKEUP_UNDEFINED ? "冷启动/复位" : "非深睡唤醒");
+        }
+    }
 
     /*!< Monitor adc switch */
     bsp_adc_switch_init();

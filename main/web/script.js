@@ -19,6 +19,9 @@ class LanguageManager {
                 leftKeyColor: '左键颜色',
                 rightKeyColor: '右键颜色',
                 keyHeatmapEffect: '按键灯效',
+                autoOffLabel: '自动关机',
+                autoOffUnit: '分钟',
+                autoOffHint: '仅在蓝牙档生效：无主机连接超过该时长后闪灯提示并休眠（按任一键唤醒）。填 0 表示关闭。',
                 dipSwitchPosition: '拨码开关位置',
                 left: '左',
                 center: '中',
@@ -293,6 +296,9 @@ class LanguageManager {
                 leftKeyColor: 'Left Key Color',
                 rightKeyColor: 'Right Key Color',
                 keyHeatmapEffect: 'Key LED effect',
+                autoOffLabel: 'Auto power off',
+                autoOffUnit: 'min',
+                autoOffHint: 'BLE position only: after this long with no host connected, the LEDs blink and the device sleeps (press any key to wake). Set 0 to disable.',
                 dipSwitchPosition: 'DIP Switch Position',
                 left: 'Left',
                 center: 'Center',
@@ -2634,6 +2640,8 @@ class DualKeyController {
             bleMappingEnabled: true,
             // 按键灯效开关（按下亮起、1s 内淡出）
             keyLedEffectEnabled: true,
+            // 自动关机超时（分钟，0 = 关闭）；仅蓝牙档生效
+            autoOffMin: 15,
             // 自定义映射状态
             customMappingEnabled: false,
             customLeftAction:  { action_type: 0, modifier: 0, keycode: 0x4B, text: '' },
@@ -2784,6 +2792,15 @@ class DualKeyController {
                     this.dualkeyState.keyLedEffectEnabled = data.dualkey.key_led_effect_enabled;
                 }
 
+                // 自动关机超时（分钟，0 = 关闭）
+                // 刚下发过配置的 3 秒内忽略回传：状态广播比命令慢一拍，否则会出现
+                // "改完立刻被上一帧的旧值顶回去"（按键灯效开关当初就是这个观感问题）。
+                if (data.dualkey.auto_off_min !== undefined) {
+                    if (!this.autoOffPendingUntil || Date.now() >= this.autoOffPendingUntil) {
+                        this.dualkeyState.autoOffMin = data.dualkey.auto_off_min;
+                    }
+                }
+
                 // 更新自定义映射状态
                 if (data.dualkey.custom_mapping_enabled !== undefined) {
                     this.dualkeyState.customMappingEnabled = data.dualkey.custom_mapping_enabled;
@@ -2921,6 +2938,30 @@ class DualKeyController {
             });
         } else {
             console.error('未找到按键灯效开关元素');
+        }
+
+        // 自动关机超时（分钟，0 = 关闭；仅蓝牙档生效）
+        // 用 change 而不是 input：数值真正提交（回车/失焦/点微调箭头）才下发，
+        // 避免边输入边写 NVS。
+        const autoOffMinutes = document.getElementById('autoOffMinutes');
+        if (autoOffMinutes) {
+            autoOffMinutes.addEventListener('change', () => {
+                let v = parseInt(autoOffMinutes.value, 10);
+                if (isNaN(v)) {
+                    v = 15;
+                }
+                v = Math.max(0, Math.min(120, v));
+                autoOffMinutes.value = v;
+                this.dualkeyState.autoOffMin = v;
+                // 3 秒内忽略状态回传，避免旧值把它顶回去
+                this.autoOffPendingUntil = Date.now() + 3000;
+                this.sendMessage({
+                    type: 'set_auto_off',
+                    minutes: v
+                });
+            });
+        } else {
+            console.error('未找到自动关机输入框元素');
         }
 
         // Bus 枚举设备按钮
@@ -3829,6 +3870,24 @@ class DualKeyController {
 
         // 同步按键灯效开关
         this.updateKeyLedEffectSwitch();
+
+        // 同步自动关机分钟数
+        this.updateAutoOffInput();
+    }
+
+    updateAutoOffInput() {
+        // 同步自动关机超时输入框；正在输入时不抢（否则会打断用户输入 / 光标跳位）
+        const el = document.getElementById('autoOffMinutes');
+        if (!el) {
+            return;
+        }
+        if (document.activeElement === el) {
+            return;
+        }
+        const v = String(this.dualkeyState.autoOffMin);
+        if (el.value !== v) {
+            el.value = v;
+        }
     }
 
     updateKeyDisplay() {

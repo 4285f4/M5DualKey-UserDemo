@@ -70,6 +70,17 @@
                                 <span class="toggle-slider"></span>
                             </label>
                         </div>
+
+                        <!-- 自动关机（仅蓝牙档）：无主机连接超过设定时长后闪灯提示并进入深度睡眠 -->
+                        <div class="key-led-effect">
+                            <span class="toggle-label" data-i18n="autoOffLabel">自动关机</span>
+                            <div class="auto-off-input">
+                                <input type="number" id="autoOffMinutes" min="0" max="120" step="1" value="15"
+                                       title="无主机连接超时（分钟），0 = 关闭" aria-label="自动关机超时分钟数">
+                                <span class="auto-off-unit" data-i18n="autoOffUnit">分钟</span>
+                            </div>
+                        </div>
+                        <div class="auto-off-hint" data-i18n="autoOffHint">仅在蓝牙档生效：无主机连接超过该时长后闪灯提示并休眠（按任一键唤醒）。填 0 表示关闭。</div>
                         
                         <!-- 拨码开关位置 -->
                         <div class="dip-switch-section">

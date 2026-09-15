@@ -290,6 +290,44 @@ body {
     color: #6b7280;
 }
 
+/* 自动关机超时输入（仅蓝牙档生效） */
+.auto-off-input {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.auto-off-input input[type="number"] {
+    width: 72px;
+    padding: 5px 8px;
+    font-size: 14px;
+    text-align: center;
+    color: #374151;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    box-sizing: border-box;
+}
+
+.auto-off-input input[type="number"]:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.auto-off-input .auto-off-unit {
+    font-size: 13px;
+    color: #6b7280;
+    white-space: nowrap;
+}
+
+.auto-off-hint {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #9ca3af;
+}
+
 /* 拨码开关样式 */
 .dip-switch-section {
     margin-top: 20px;
