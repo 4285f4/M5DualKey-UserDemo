@@ -1815,11 +1815,16 @@ static void update_device_status(void)
              *   → 这才是真正的中间 OFF 档。 */
             g_device_status.dip_switch_pos = DIP_SWITCH_POS_CENTER;
         }
-        /*!< 取证：把"档位判定值 switch_pos"与"派生显示值"的分歧记进 NVS 事件
-         *   日志（内部按结论变化节流），下次读 /diag 就能看出分歧时 switch_pos
-         *   到底是什么值。 */
-        diag_note_dip_view(switch_pos, g_device_status.dip_switch_pos, g_device_status.switch_1_value,
-                           g_device_status.switch_2_value);
+        /*!< ⚠️ 这条路径上刻意不做任何 NVS / flash 写入。
+         *
+         *   2026-09-15：上一版在这里调用 diag_note_dip_view() 往 NVS 追加一行取证，
+         *   烧录后实机立刻出现"疯狂反复重启"（USB 在两档 PID 之间反复重枚举）。
+         *   本函数由 websocket_task 以 ~2Hz 调用，在这条高频路径上做 flash 写属于
+         *   高风险动作（cache 停摆、IPC 停核、NVS GC 时长不可控），而它换来的只是
+         *   "switch_pos 是否与硬件分歧"这一条诊断信息 —— 不值得用设备可用性去换。
+         *
+         *   显示值本身已经由原始 ADC 派生，与硬件一致，不需要 switch_pos 的旁证；
+         *   真要做档位分歧取证，应放在 adc_switch_task（1Hz、且本来就承担该职责）。 */
     }
 
     // 更新电池状态 (使用test_case.c中的真实数据)
