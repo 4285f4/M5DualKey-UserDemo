@@ -18,7 +18,7 @@ class LanguageManager {
                 rightKey: '右键',
                 leftKeyColor: '左键颜色',
                 rightKeyColor: '右键颜色',
-                keyHeatmapEffect: '按键热力灯效',
+                keyHeatmapEffect: '按键灯效',
                 dipSwitchPosition: '拨码开关位置',
                 left: '左',
                 center: '中',
@@ -292,7 +292,7 @@ class LanguageManager {
                 rightKey: 'Right Key',
                 leftKeyColor: 'Left Key Color',
                 rightKeyColor: 'Right Key Color',
-                keyHeatmapEffect: 'Keypress heatmap',
+                keyHeatmapEffect: 'Key LED effect',
                 dipSwitchPosition: 'DIP Switch Position',
                 left: 'Left',
                 center: 'Center',
@@ -2632,7 +2632,7 @@ class DualKeyController {
             // 按键映射开关状态
             usbMappingEnabled: true,
             bleMappingEnabled: true,
-            // 按键热力灯效开关（打字热力图效果）
+            // 按键灯效开关（按下亮起、1s 内淡出）
             keyLedEffectEnabled: true,
             // 自定义映射状态
             customMappingEnabled: false,
@@ -2779,7 +2779,7 @@ class DualKeyController {
                 if (data.dualkey.ble_mapping_enabled !== undefined) {
                     this.dualkeyState.bleMappingEnabled = data.dualkey.ble_mapping_enabled;
                 }
-                // 按键热力灯效开关（payload 用下划线，dualkeyState 用驼峰）
+                // 按键灯效开关（payload 用下划线，dualkeyState 用驼峰）
                 if (data.dualkey.key_led_effect_enabled !== undefined) {
                     this.dualkeyState.keyLedEffectEnabled = data.dualkey.key_led_effect_enabled;
                 }
@@ -2908,7 +2908,7 @@ class DualKeyController {
             console.error('未找到右键颜色选择器元素');
         }
 
-        // 按键热力灯效开关（打字热力图效果）
+        // 按键灯效开关（按下亮起、1s 内淡出）
         const keyLedEffectSwitch = document.getElementById('keyLedEffectSwitch');
         if (keyLedEffectSwitch) {
             keyLedEffectSwitch.addEventListener('change', (e) => {
@@ -2920,7 +2920,7 @@ class DualKeyController {
                 });
             });
         } else {
-            console.error('未找到按键热力灯效开关元素');
+            console.error('未找到按键灯效开关元素');
         }
 
         // Bus 枚举设备按钮
@@ -3827,7 +3827,7 @@ class DualKeyController {
         // 更新颜色选择器的值
         this.updateColorPickers();
 
-        // 同步按键热力灯效开关
+        // 同步按键灯效开关
         this.updateKeyLedEffectSwitch();
     }
 
@@ -3861,7 +3861,7 @@ class DualKeyController {
     }
 
     updateKeyLedEffectSwitch() {
-        // 同步按键热力灯效开关的勾选状态（直接改 checked 不会触发 change 事件）
+        // 同步按键灯效开关的勾选状态（直接改 checked 不会触发 change 事件）
         const switchEl = document.getElementById('keyLedEffectSwitch');
         if (switchEl) {
             switchEl.checked = !!this.dualkeyState.keyLedEffectEnabled;

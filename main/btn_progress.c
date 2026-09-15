@@ -38,7 +38,13 @@ static int current_key_mapping_index = 10;
 // 而 rgb_matrix 每次渲染会刷新整条灯带。主程序直接写像素时若不与它串行，
 // "写左灯 + 写右灯"两次调用之间可能被 rgb_matrix 的清屏冲掉 —— 表现为某个键的灯熄灭。
 static SemaphoreHandle_t light_mutex  = NULL;
-static volatile bool light_overlay_on = false;
+/*!< 接管方按"来源"分开登记，light_overlay_on 是它们的或。
+ *   两个接管方：充电电量指示（power_indicator_task）与按键灯效脉冲。
+ *   早期只有一个布尔量，两方先后调用会互相覆盖 —— 例如按键灯效结束时会把
+ *   充电指示刚建立的接管一起关掉，灯带随即被 rgb_matrix 的清屏刷一下。 */
+static volatile bool light_overlay_charge = false;
+static volatile bool light_overlay_flash  = false;
+static volatile bool light_overlay_on     = false;
 
 static void light_lock(void)
 {
@@ -378,25 +384,56 @@ void btn_progress_init(void)
     }
 }
 
+/*!< ---- 报告送达侧时延取证（纯 RAM）----
+ *   量的是"把报告交给协议栈"这一步的墙钟耗时。与 tap_hold_ms 互补：后者是两个边沿
+ *   之差，两边沿被整体平移就测不出来；本组指标能把"固件侧有没有卡"单独证伪或证实。
+ *   BLE 键盘报告走 Indicate（需主机回 ACK），本来就是可能阻塞的一侧，故 USB/BLE 分开记。 */
+static uint32_t s_usb_send_ms_last = 0;
+static uint32_t s_usb_send_ms_max  = 0;
+static uint32_t s_usb_send_cnt     = 0;
+static uint32_t s_ble_send_ms_last = 0;
+static uint32_t s_ble_send_ms_max  = 0;
+static uint32_t s_ble_send_cnt     = 0;
+
+static void send_ms_record(uint32_t *last, uint32_t *max, uint32_t *cnt, int64_t t0)
+{
+    const uint32_t ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+    *last             = ms;
+    if (ms > *max) {
+        *max = ms;
+    }
+    (*cnt)++;
+}
+
 static void _report(hid_report_t report)
 {
     custom_emit_lock();
     switch (report_type) {
-        case TINYUSB_HID_REPORT:
+        case TINYUSB_HID_REPORT: {
+            const int64_t t0 = esp_timer_get_time();
             tinyusb_hid_keyboard_report(report);
+            send_ms_record(&s_usb_send_ms_last, &s_usb_send_ms_max, &s_usb_send_cnt, t0);
             break;
-        case BLE_HID_REPORT:
+        }
+        case BLE_HID_REPORT: {
+            const int64_t t0 = esp_timer_get_time();
             ble_hid_keyboard_report(report);
+            send_ms_record(&s_ble_send_ms_last, &s_ble_send_ms_max, &s_ble_send_cnt, t0);
             break;
+        }
         case USB_CDC_REPORT:
             // CDC 模式不发送 HID 报告，在 btn_progress 中直接处理
             break;
         case ALL_REPORT:
             if (g_usb_mapping_enabled) {
+                const int64_t t0 = esp_timer_get_time();
                 tinyusb_hid_keyboard_report(report);
+                send_ms_record(&s_usb_send_ms_last, &s_usb_send_ms_max, &s_usb_send_cnt, t0);
             }
             if (g_ble_mapping_enabled) {
+                const int64_t t0 = esp_timer_get_time();
                 ble_hid_keyboard_report(report);
+                send_ms_record(&s_ble_send_ms_last, &s_ble_send_ms_max, &s_ble_send_cnt, t0);
             }
             break;
         default:
@@ -475,25 +512,6 @@ bool btn_progress_has_pressed_key(void)
     return s_keys_down > 0;
 }
 
-/*!< 热力图淡出的"快渲染窗口"。
- *
- *   背景：light_progress_task 空闲时按 200ms 渲染一次（为 light sleep 省唤醒），
- *   但 typing_heatmap 的衰减是"**每次渲染**减一个定值"（typing_heatmap_anim.h:96），
- *   与渲染周期无关。于是空闲周期一从 50ms 拉到 200ms，淡出就慢了 4 倍；而按下时
- *   才是 10ms —— 结果一次短按（物理按住 ~100ms）松开后，那颗灯要十几秒才熄灭，
- *   观感就是"按一下就常亮"，再按一下改的是热力值/色相，于是又"换颜色"。
- *
- *   这里记录最近一次按键事件的时刻，让渲染任务在热力散尽前保持 10ms 快节奏；
- *   散尽后自然回到 200ms，light sleep 的省电收益不受影响（按键是用户主动行为，
- *   其后 1.2s 内多几次唤醒无关功耗大局）。 */
-#define LED_ANIM_SETTLE_MS 1200
-static int64_t s_last_key_event_us = INT64_MIN / 4;
-
-bool btn_progress_led_anim_active(void)
-{
-    return (esp_timer_get_time() - s_last_key_event_us) < ((int64_t)LED_ANIM_SETTLE_MS * 1000);
-}
-
 void btn_progress(keyboard_btn_report_t kbd_report)
 {
     static uint8_t layer         = 1;
@@ -508,8 +526,6 @@ void btn_progress(keyboard_btn_report_t kbd_report)
     sys_param_t *sys_param       = settings_get_parameter();
 
     s_keys_down = kbd_report.key_pressed_num;
-    /*!< 有任何按键事件就把灯效快渲染窗口续上（含松手那次，淡出从这里开始计时）。 */
-    s_last_key_event_us = esp_timer_get_time();
 
     /*!< 时延取证：⚠️ 本函数是**按键事件回调**（只在 down/up 跳变时被调，不是每 1ms 扫描），
      *   所以下面算出的"相邻回调间隔"实际等于**一次按住的持续时长（up - down）**，
@@ -875,6 +891,13 @@ void btn_progress_get_latency_stats(btn_latency_stats_t *out)
     out->long_count        = s_long_count;
     out->cb_gap_ms_max     = s_cb_gap_ms_max;
     out->cb_down_count     = s_cb_down_count;
+
+    out->usb_send_ms_last  = s_usb_send_ms_last;
+    out->usb_send_ms_max   = s_usb_send_ms_max;
+    out->usb_send_cnt      = s_usb_send_cnt;
+    out->ble_send_ms_last  = s_ble_send_ms_last;
+    out->ble_send_ms_max   = s_ble_send_ms_max;
+    out->ble_send_cnt      = s_ble_send_cnt;
 }
 
 void light_progress(void)
@@ -900,10 +923,19 @@ void light_progress_unlock(void)
     light_unlock();
 }
 
-void light_progress_set_overlay(bool on)
+void light_progress_set_charge_overlay(bool on)
 {
     light_lock();
-    light_overlay_on = on;
+    light_overlay_charge = on;
+    light_overlay_on     = light_overlay_charge || light_overlay_flash;
+    light_unlock();
+}
+
+void light_progress_set_flash_overlay(bool on)
+{
+    light_lock();
+    light_overlay_flash = on;
+    light_overlay_on    = light_overlay_charge || light_overlay_flash;
     light_unlock();
 }
 

@@ -537,19 +537,24 @@ static esp_err_t diag_get_handler(httpd_req_t *req)
     char *log = diag_log_load();
 
     /*!< 按键时延取证（纯 RAM，只对本次运行有效）。判据见 btn_progress.h：
-     *   快速点按若被量成约 1000ms → 边沿晚检出；若约 100ms → 延迟在报告送达。 */
+     *   tap 量的是两个边沿之差（测不出"整体平移"）；send 量的是把报告交给协议栈的耗时，
+     *   两者合起来才能分辨"边沿晚检出"与"送达侧阻塞"。 */
     btn_latency_stats_t lat;
     btn_progress_get_latency_stats(&lat);
-    char *lat_txt = (char *)malloc(320);
+    char *lat_txt = (char *)malloc(640);
     if (lat_txt != NULL) {
-        snprintf(lat_txt, 320,
+        snprintf(lat_txt, 640,
                  "\n--- key latency (RAM, this session only) ---\n"
                  "short tap   : last %u ms   max %u ms   count %u\n"
                  "long  fire  : last %u ms   count %u\n"
-                 "hold cb gap : max %u ms    (%u callbacks while key was down)\n",
+                 "hold cb gap : max %u ms    (%u callbacks while key was down)\n"
+                 "hid send usb: last %u ms   max %u ms   count %u\n"
+                 "hid send ble: last %u ms   max %u ms   count %u\n",
                  (unsigned)lat.tap_hold_ms_last, (unsigned)lat.tap_hold_ms_max, (unsigned)lat.tap_count,
                  (unsigned)lat.long_fire_ms_last, (unsigned)lat.long_count, (unsigned)lat.cb_gap_ms_max,
-                 (unsigned)lat.cb_down_count);
+                 (unsigned)lat.cb_down_count, (unsigned)lat.usb_send_ms_last, (unsigned)lat.usb_send_ms_max,
+                 (unsigned)lat.usb_send_cnt, (unsigned)lat.ble_send_ms_last, (unsigned)lat.ble_send_ms_max,
+                 (unsigned)lat.ble_send_cnt);
     }
 
     if (txt == NULL && boot == NULL && log == NULL && lat_txt == NULL) {
@@ -658,10 +663,11 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                         }
                     }
                 } else if (strcmp(type->valuestring, "set_key_led_effect") == 0) {
-                    // 按键热力灯效开关：本 build 里 rgb_matrix 唯一启用的效果就是
-                    // TYPING_HEATMAP（按下按键那颗灯蓝色亮起并淡出），故它只影响这一效果。
-                    // 直接操作 rgb_matrix 的 enable 位：rgb_matrix_enable()/disable() 内部会写
-                    // NVS 持久化，效果本身（typing_heatmap_anim.h）不做任何改动。
+                    // 按键灯效开关（网页文案：按键灯效）。作用对象是 project 侧的按键脉冲
+                    // 灯效（key_flash_*）—— 它用 rgb_matrix 的 enable 位当开关，所以这里
+                    // 仍然直接操作该位：rgb_matrix_enable()/disable() 内部会写 NVS 持久化，
+                    // 而 key_led_effect_enabled() 读的就是它，两边永远一致。
+                    // （原先是打字热力图 TYPING_HEATMAP，2026-09-15 已换成单次脉冲灯效。）
                     cJSON *enabled = cJSON_GetObjectItem(json, "enabled");
                     if (enabled && cJSON_IsBool(enabled)) {
                         const bool en = cJSON_IsTrue(enabled);
@@ -670,7 +676,7 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                         } else {
                             rgb_matrix_disable();
                         }
-                        ESP_LOGI(TAG, "按键热力灯效: %s", en ? "启用" : "禁用");
+                        ESP_LOGI(TAG, "按键灯效: %s", en ? "启用" : "禁用");
                         // enable 位一变，rgb_matrix 下一次渲染会带 init 标记从而清一次整条灯带。
                         // 先等它落地，再把用户配置的静态色成对写回，否则会有一颗灯的灯被抹掉。
                         if (g_device_status.left_key_color != 0x000000 || g_device_status.right_key_color != 0x000000) {
@@ -2068,6 +2074,106 @@ static httpd_handle_t start_webserver(void)
     return server;
 }
 
+/*!< ==================== 按键灯效（替代原 TYPING_HEATMAP 热力图）====================
+ *
+ *   为什么换掉热力图（2026-09-15，用户实测反馈）：
+ *   热力值是"每次按键 +32、每渲染帧 -2"的**累积**模型，衰减速率还完全绑在渲染周期上。
+ *   本机只有 2 颗灯，同一个键会被反复加热 —— 连点超过约 6 次/秒，累积就压过衰减，
+ *   一路冲到 val>=85，于是亮度到顶、色相从蓝被推向绿/红，观感是"越来越亮、还会变色、
+ *   刺眼"；停止后又要等热力慢慢排掉，"残留很久"。
+ *
+ *   新模型：按下 = 一次**脉冲**。该灯立刻亮到峰值，然后在 KEY_FLASH_DURATION_MS 内
+ *   线性淡到 0。连点只是不断重置同一颗灯的起始时刻，**结构上不可能叠加**。
+ *
+ *   与 rgb_matrix 的关系：效果本身仍在（mode=2），但不再喂热力 ⇒ 它的输出恒为全灭，
+ *   空闲观感与改动前一致。脉冲期间用 overlay 暂停 rgb_matrix 渲染，直接写灯带像素
+ *   （与充电电量指示同一套已验证机制）。 */
+#define KEY_FLASH_PEAK_LEVEL  100  /*!< 峰值亮度 0~255；刻意压低以免刺眼 */
+#define KEY_FLASH_DURATION_MS 1000 /*!< 从峰值线性淡到 0 的时长 */
+
+/*!< 每颗灯各自的脉冲起始时刻；INT64_MIN/4 表示未激活（避免与 uptime 相减溢出）。 */
+static int64_t s_key_flash_start_us[2] = {INT64_MIN / 4, INT64_MIN / 4};
+static bool    s_key_flash_overlay     = false;
+
+/*!< 按键灯效是否开启：沿用网页那个开关，也就是 rgb_matrix 的 enable 位 ——
+ *   这样上报给网页的状态（main.cpp 里 cJSON "key_led_effect_enabled"）与这里的实际
+ *   行为永远一致，不会出现"网页显示开着但灯不亮"。 */
+static bool key_led_effect_enabled(void)
+{
+    return rgb_matrix_is_enabled();
+}
+
+/*!< input_index：0 = 左键，1 = 右键。LED 映射与之交叉：左键 = LED1，右键 = LED0
+ *   （与 set_key_rgb_color_locked / power_indicator_task 的既有约定一致）。 */
+#define KEY_FLASH_LED_OF_INPUT(input_index) ((input_index) == 0 ? 1 : 0)
+
+static void key_flash_trigger(int input_index)
+{
+    if (!key_led_effect_enabled()) {
+        return;
+    }
+    s_key_flash_start_us[KEY_FLASH_LED_OF_INPUT(input_index)] = esp_timer_get_time();
+
+    /*!< 立刻唤醒渲染任务：空闲周期是 200ms，若只等它自己醒来，第一次点亮最多晚 200ms
+     *   —— 那正是"按下去灯半天才亮"的观感来源。 */
+    if (light_progress_task_handle != NULL) {
+        xTaskNotifyGive(light_progress_task_handle);
+    }
+}
+
+/*!< 是否还有灯处于脉冲中。渲染任务据此选周期，充电指示也据此让位。 */
+static bool key_flash_any_active(void)
+{
+    if (!key_led_effect_enabled()) {
+        return false;
+    }
+    const int64_t now = esp_timer_get_time();
+    for (int led = 0; led < 2; led++) {
+        const int64_t t = now - s_key_flash_start_us[led];
+        if (t >= 0 && t < (int64_t)KEY_FLASH_DURATION_MS * 1000) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*!< 渲染一帧按键灯效。
+ *   只写"仍在脉冲中"的那些灯，其余像素保持原样不碰 —— 这样充电电量指示画的那颗灯
+ *   不会被我们抹掉，也就不需要在这里重建"静息色"（少一份与业务状态的耦合）。 */
+static void key_flash_render(void)
+{
+    const int64_t now  = esp_timer_get_time();
+    const int64_t span = (int64_t)KEY_FLASH_DURATION_MS * 1000;
+    bool          wrote = false;
+
+    light_progress_lock();
+    if (led_strip != NULL) {
+        for (int led = 0; led < 2; led++) {
+            const int64_t t = now - s_key_flash_start_us[led];
+            if (t < 0 || t >= span) {
+                continue;
+            }
+            const uint8_t level = (uint8_t)((int64_t)KEY_FLASH_PEAK_LEVEL * (span - t) / span);
+            led_strip_set_pixel(led_strip, led, 0, 0, level); /*!< 纯蓝，与原来按键反馈的色相一致 */
+            wrote = true;
+        }
+        if (wrote) {
+            led_strip_refresh(led_strip);
+        }
+    }
+    light_progress_unlock();
+
+    if (wrote) {
+        if (!s_key_flash_overlay) {
+            s_key_flash_overlay = true;
+            light_progress_set_flash_overlay(true);
+        }
+    } else if (s_key_flash_overlay) {
+        s_key_flash_overlay = false;
+        light_progress_set_flash_overlay(false);
+    }
+}
+
 static void keyboard_cb(keyboard_btn_handle_t kbd_handle, keyboard_btn_report_t kbd_report, void *user_data)
 {
     ESP_LOGI(TAG, "keyboard_cb: pressed=%ld, released=%ld, changed=%d", kbd_report.key_pressed_num,
@@ -2096,11 +2202,14 @@ static void keyboard_cb(keyboard_btn_handle_t kbd_handle, keyboard_btn_report_t 
 
     btn_progress(kbd_report);
 
-    /*!< Lighting with key pressed */
+    /*!< 按键灯效：只认"按下"边沿。
+     *   ⚠️ 这里必须用 key_change_num（按下 +1），不能用 key_pressed_num ——
+     *   松手时 key_change_num = 0 - 上一次的 1（uint32 回绕）→ 存进 int 字段是 -1，
+     *   `> 0` 自然跳过，所以不会在松手时再触发一次脉冲，也不会出现负索引
+     *   （key_pressed_num - i 只在按下时才被求值，落在 0 .. n-1 内）。 */
     if (kbd_report.key_change_num > 0) {
         for (int i = 1; i <= kbd_report.key_change_num; i++) {
-            process_rgb_matrix(kbd_report.key_data[kbd_report.key_pressed_num - i].output_index,
-                               kbd_report.key_data[kbd_report.key_pressed_num - i].input_index, true);
+            key_flash_trigger(kbd_report.key_data[kbd_report.key_pressed_num - i].input_index);
         }
     }
 
@@ -2117,13 +2226,13 @@ static void keyboard_cb(keyboard_btn_handle_t kbd_handle, keyboard_btn_report_t 
     iot_button_timer_enable(kbd_report.key_pressed_num > 0);
 }
 
-/*!< 灯效任务心跳：空闲 200ms / 有键按下 10ms。
+/*!< 灯效任务心跳：空闲 200ms / 有键按下或灯效淡出中 10ms。
  *   原为固定 10ms 无条件唤醒，会持续把 CPU 从 light sleep 拉起来。
  *   按键上报不依赖本任务轮询（keyboard_cb 由 GPIO 中断边沿驱动，s_keys_down 在
  *   回调里同步更新），所以空闲期拉长不影响按键手感；空闲 200ms 只是让长按"到点
  *   触发"最多晚一个心跳（长按阈值本身是数百 ms 级，长度按绝对时间戳计算，不会
- *   累积误差）；有键按下、或刚松手不久（热力图尚未淡完）时回到 10ms，
- *   保证长按判定精度与热力图淡出效果。
+ *   累积误差）；有键按下、或按键灯效脉冲仍未淡完时回到 10ms，
+ *   保证长按判定精度与淡出的平滑度。
  *   在 light sleep 下本任务的每个心跳周期都对应一次唤醒，200ms 把这里的唤醒
  *   频率从 20/s 降到 5/s。 */
 #define LIGHT_TASK_PERIOD_IDLE_MS 200
@@ -2133,15 +2242,24 @@ static void light_progress_task(void *pvParameters)
 {
     while (1) {
         if (bsp_ws2812_is_enable()) {
-            light_progress();
+            /*!< 按键灯效需要自己画像素并暂停 rgb_matrix，故它优先；没有脉冲时才走常规渲染。
+             *   注意条件里带上 s_key_flash_overlay：脉冲结束的那一帧仍要进来一次，
+             *   由 key_flash_render() 负责把 overlay 放掉，否则灯带会一直停在被接管的画面。 */
+            if (key_flash_any_active() || s_key_flash_overlay) {
+                key_flash_render();
+            } else {
+                light_progress();
+            }
         }
         /*!< 顺便作为心跳：检查长按是否已到阈值（方案A：到点即触发） */
         btn_progress_tick();
-        /*!< 快节奏的条件除了"键还按着"，还要算上"刚松手不久"：热力图的衰减是每次渲染
-         *   减一个定值，若一松手就掉回 200ms，淡出会慢 20 倍，观感变成"按一下就常亮"。
-         *   见 btn_progress_led_anim_active()。 */
-        const bool fast_period = btn_progress_has_pressed_key() || btn_progress_led_anim_active();
-        vTaskDelay((fast_period ? LIGHT_TASK_PERIOD_ACTIVE_MS : LIGHT_TASK_PERIOD_IDLE_MS) / portTICK_PERIOD_MS);
+        /*!< 快节奏的条件：键还按着，或按键灯效正在淡出（淡出要靠每帧重画才平滑）。
+         *   其余时间回到 200ms，把 light sleep 下的唤醒从 20/s 降到 5/s —— 按键是用户
+         *   主动行为，其后 1s 内的多几次唤醒不影响功耗大局。 */
+        const bool fast_period = btn_progress_has_pressed_key() || key_flash_any_active();
+        /*!< 用"通知 + 超时"等待，而不是纯 vTaskDelay：按键回调会 xTaskNotifyGive()
+         *   立刻唤醒本任务，否则空闲档下第一次点亮最多要等一个 200ms 周期。 */
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(fast_period ? LIGHT_TASK_PERIOD_ACTIVE_MS : LIGHT_TASK_PERIOD_IDLE_MS));
     }
 }
 
@@ -2163,7 +2281,7 @@ static uint32_t power_indicator_color(int percentage)
 /*!< 充电电量指示：USB 连接期间以低亮度常亮显示电量等级。
  *
  *   rgb_matrix 每 10ms 就会重绘整条灯带，直接写像素会被立刻覆盖，因此必须用 overlay
- *   接管渲染；断开 USB 后释放 overlay 并恢复按键显示（静态色或热力灯效）。
+ *   接管渲染；断开 USB 后释放 overlay 并恢复按键显示（静态色或按键灯效）。
  */
 static void power_indicator_task(void *pvParameters)
 {
@@ -2171,20 +2289,25 @@ static void power_indicator_task(void *pvParameters)
 
     while (1) {
         if (g_usb_connected) {
-            const uint32_t color = power_indicator_color(g_battery_percentage);
             if (!overlay_on) {
-                light_progress_set_overlay(true);
+                light_progress_set_charge_overlay(true);
                 overlay_on = true;
             }
-            light_progress_lock();
-            set_key_rgb_color_locked(0, color);  // 右键 LED index 0
-            set_key_rgb_color_locked(1, color);  // 左键 LED index 1
-            light_progress_unlock();
+            /*!< 按键灯效脉冲期间让位：它正在那两颗灯上画淡出，这里若照旧写电量色会把
+             *   淡出画面刷回去（表现为按键反馈被"吃掉"、或闪烁）。1s 后本任务会再刷一次，
+             *   脉冲最长为 1s，所以最多漏刷一轮，观感无影响。 */
+            if (!key_flash_any_active()) {
+                const uint32_t color = power_indicator_color(g_battery_percentage);
+                light_progress_lock();
+                set_key_rgb_color_locked(0, color);  // 右键 LED index 0
+                set_key_rgb_color_locked(1, color);  // 左键 LED index 1
+                light_progress_unlock();
+            }
             vTaskDelay(pdMS_TO_TICKS(1000));  // 常亮；每秒刷新一次电量等级
         } else if (overlay_on) {
             overlay_on = false;
             // 先放开渲染，等可能的一次性清屏落地，再成对恢复按键显示
-            light_progress_set_overlay(false);
+            light_progress_set_charge_overlay(false);
             vTaskDelay(pdMS_TO_TICKS(30));
             refresh_key_colors_from_status();
             vTaskDelay(pdMS_TO_TICKS(20));

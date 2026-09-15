@@ -92,6 +92,21 @@ typedef struct {
     uint32_t long_count;        /**< 长按触发次数 */
     uint32_t cb_gap_ms_max;     /**< ⚠️名不副实：实测＝最长一次按住时长（非回调间隔） */
     uint32_t cb_down_count;     /**< 参与统计的回调次数 */
+
+    /*!< ---- 报告送达侧：单次 HID 发送调用的墙钟耗时（2026-09-15 补）----
+     *   这是上面那个"整体平移"盲点的另一半：tap 指标量的是两个边沿之差，
+     *   若两者都被推迟同样的时间就看不出来；本组指标直接量"把报告交给协议栈"
+     *   这一步花了多久。BLE 键盘报告走 Indicate，需要主机回 ACK，本来就可能阻塞。
+     *   分 USB / BLE 两路记录，便于判断延迟出在哪一侧。
+     *   判据：若 WiFi 档下 ble_send_ms_max 达到数百 ms ⇒ 阻塞在无线电侧；
+     *        若一直是个位数 ⇒ 固件侧没卡，延迟在主机/共存调度上。
+     *   ⚠️ 一次物理按键会发"按下 + 松开"两份报告，所以计数约为按键次数的两倍。 */
+    uint32_t usb_send_ms_last; /**< 最近一次 USB HID 发送耗时 */
+    uint32_t usb_send_ms_max;  /**< USB HID 发送耗时最大值 */
+    uint32_t usb_send_cnt;     /**< USB HID 发送调用次数 */
+    uint32_t ble_send_ms_last; /**< 最近一次 BLE HID 发送耗时 */
+    uint32_t ble_send_ms_max;  /**< BLE HID 发送耗时最大值 */
+    uint32_t ble_send_cnt;     /**< BLE HID 发送调用次数 */
 } btn_latency_stats_t;
 
 /**
@@ -131,13 +146,22 @@ void light_progress_lock(void);
 void light_progress_unlock(void);
 
 /**
- * @brief 接管/释放板载灯带渲染。
+ * @brief 申请/释放"充电电量指示"对灯带的接管。
  *
- * on = true 时暂停 rgb_matrix 渲染，调用方可自行画像素（如充电电量常亮指示）；
- * 期间按键热力灯效不会显示。置回 false 后 rgb_matrix 恢复正常渲染。
+ * on = true 时暂停 rgb_matrix 渲染，调用方可自行画像素（充电电量常亮指示）；
+ * 置回 false 后若没有别的接管方，rgb_matrix 恢复正常渲染。
+ *
+ * ⚠️ 接管方有两个（充电电量指示、按键灯效脉冲），任一在用时都应暂停渲染。因此
+ *    这里按"来源"分开登记、内部取或，**不要**用单一布尔量互相覆盖 —— 否则按键
+ *    灯效结束时会把充电指示的接管一起关掉（或反之），灯带就会闪错。
  * 注意：内部自行加锁，调用时不要持有 light_progress_lock()。
  */
-void light_progress_set_overlay(bool on);
+void light_progress_set_charge_overlay(bool on);
+
+/**
+ * @brief 申请/释放"按键灯效脉冲"对灯带的接管。与上面同源，见其说明。
+ */
+void light_progress_set_flash_overlay(bool on);
 
 /**
  * @brief 当前是否处于 overlay 接管状态。
@@ -251,17 +275,10 @@ uint16_t btn_progress_get_long_press_ms(void);
 /**
  * @brief 最近一次上报中是否有键处于按下状态。
  *        灯效任务用它决定心跳周期（空闲 200ms / 有键 10ms）以配合 light sleep。
+ *        按键灯效脉冲的活动判据不在这里 —— 它属于 LED 渲染侧的私有状态
+ *        （见 main.cpp 的 key_flash_any_active()）。
  */
 bool btn_progress_has_pressed_key(void);
-
-/**
- * @brief 最近是否发生过按键事件（含刚松手的那一次），用于让灯效保持快渲染。
- *
- *        热力图淡出是"每次渲染衰减一个定值"，空闲 200ms 的渲染周期会让淡出慢 20 倍
- *        （按一下就常亮）。灯效任务据此在按键后 LED_ANIM_SETTLE_MS 内继续用 10ms 周期。
- *        无按键活动时返回 false，省电行为不变。
- */
-bool btn_progress_led_anim_active(void);
 
 #ifdef __cplusplus
 }
