@@ -60,7 +60,9 @@ void diag_boot_note_boot(int boot_pos, int boot_ble_raw, int boot_wifi_raw);
 /** 刷新存活时长（建议每秒一次）。崩溃重启后可据此推算崩溃发生在开机后多久。 */
 void diag_boot_note_uptime_ms(int64_t ms);
 
-/** 记录一次运行期"档位判定"背后的原始 ADC 样本（无论最终是否重启）。 */
+/** 记录一次运行期"档位判定"背后的原始 ADC 样本（无论最终是否重启）。
+ *  ⚠️ 判定为 CENTER(0) 时视为休眠误读：NVS 事件日志**节流**为"首次 + 之后每 30 分钟
+ *  一条"（行内带累计次数），避免每约 33s 一条把日志刷爆；RTC 字段仍逐次更新。 */
 void diag_boot_note_dip_sample(int r0, int r1, int v0, int v1, int from, int to, int hits);
 
 /** 记录一次"跨档自证"的结果。confirmed=false 表示复读后判为休眠导致的误读。 */

@@ -49,6 +49,19 @@ static int64_t  s_t_start    = 0;
 static int64_t  s_last_flush = 0;
 static char    *s_snapshot   = NULL; /*!< 最近一次快照文本（堆，由 open_memstream 分配） */
 
+/*!< --- CENTER 误读的 NVS 日志节流（2026-09-15）---
+ *   运行期读到 CENTER 档 = 0 是**确定性的误读**（见 main.cpp `adc_switch_task` 里的
+ *   守卫；light sleep 下被驱动为高的那一路会系统性塌陷到阈值以下），且每约 33s 复现一次。
+ *   上一版每条都落 NVS，把"单次开机 60 行"的追加配额与事件日志总量瞬间吃光，反而
+ *   挤掉真正有价值的 BOOT# / 重启记录（实测 BLE 档静置时会看到满屏 DECIDE）。
+ *   改为：**首次 + 之后每 30 分钟一条**，行内带累计次数 —— 既不丢观测也不污染日志。
+ *   ⚠️ 0 == DIP_SWITCH_POS_CENTER，该宏定义在 main.cpp:105；本文件不包含 main 的头，
+ *      故此处用本地别名，若将来改档位编码，两边必须一起改。 */
+#define DIAG_POS_CENTER                  0
+#define DIAG_CENTER_LOG_MIN_INTERVAL_MS  (30 * 60 * 1000)
+static uint32_t s_center_misreads    = 0;  /*!< 本次上电累计的 CENTER 误读次数 */
+static int64_t  s_center_last_log_ms = 0;  /*!< 上次为误读落 NVS 的时刻（本机 uptime ms） */
+
 static void build_snapshot(void)
 {
     char  *locks  = NULL;
@@ -433,8 +446,19 @@ void diag_boot_note_dip_sample(int r0, int r1, int v0, int v1, int from, int to,
     s_boot_rec.dip_hits  = hits;
     s_boot_rec.dip_at_ms = s_boot_rec.uptime_ms;
 
-    diag_log_event("DECIDE@%lldms %d->%d hits=%d rc(%d,%d) raw(%d,%d)", (long long)s_boot_rec.uptime_ms, from, to,
-                   hits, r0, r1, v0, v1);
+    if (to == DIAG_POS_CENTER) {
+        /*!< 误读路径：节流落盘（首次 + 之后每 30 分钟一次），行内带累计次数。 */
+        s_center_misreads++;
+        const int64_t up_ms = s_boot_rec.uptime_ms;
+        if ((s_center_misreads == 1) || (up_ms - s_center_last_log_ms >= DIAG_CENTER_LOG_MIN_INTERVAL_MS)) {
+            s_center_last_log_ms = up_ms;
+            diag_log_event("DIPCENTER@%lldms x%u raw(%d,%d) hits=%d rc(%d,%d)", (long long)up_ms,
+                           (unsigned)s_center_misreads, v0, v1, hits, r0, r1);
+        }
+    } else {
+        diag_log_event("DECIDE@%lldms %d->%d hits=%d rc(%d,%d) raw(%d,%d)", (long long)s_boot_rec.uptime_ms, from, to,
+                       hits, r0, r1, v0, v1);
+    }
 }
 
 void diag_boot_note_verify(int from, int to, int recheck, bool confirmed)
