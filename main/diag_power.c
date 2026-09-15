@@ -198,18 +198,40 @@ void diag_power_clear(void)
 
 static int s_log_appends = 0; /*!< 本次开机已追加行数（每次开机清零） */
 
+/*!< 🔴 2026-09-15 定案：NVS 持久化的最小间隔（ms），且**启动期不受限**。
+ *   本项目运行期唯一的 flash 写入者就是这里。flash 擦写期间 IDF 会
+ *   `portDISABLE_INTERRUPTS`（Xtensa 上是 RSIL 15）+ stall 另一个核等它响应，于是
+ *   level-4 的 INT WDT 中断排不上队；连续 ≥600ms 就触发 stage1 的**纯硬件复位** ——
+ *   这正好解释了现场"`rst:0x8 (TG1WDT_SYS_RST)` 却连一个字 panic 转储都没有"。
+ *   所以：**控制台永远打印**（蓝牙档插 USB 就能实时看），NVS 按间隔落盘。
+ *   启动期（前 10s）不节流，保证 BOOT#/BOOTRAW/WAKE1/KEYMUX 这些"必须扛过断电"的
+ *   取证一条都不丢。 */
+#define LOG_PERSIST_MIN_GAP_MS 3000
+#define LOG_BOOT_PHASE_US      (10LL * 1000 * 1000)
+
+static int64_t s_log_last_persist_us = 0;
+
 void diag_log_event(const char *fmt, ...)
 {
-    if (s_log_appends >= LOG_MAX_APPENDS) {
-        return;
-    }
-    s_log_appends++;
-
     char line[220];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
+
+    /*!< 控制台永远打印：蓝牙档插上 USB 走 USB-Serial-JTAG 可实时读到
+     *   （.workbuddy/console_capture.py），不再依赖"切到 WiFi 档读 /diag"。 */
+    ESP_LOGI("DIAGLOG", "%s", line);
+
+    const int64_t now_us = esp_timer_get_time();
+    if (s_log_appends >= LOG_MAX_APPENDS) {
+        return;
+    }
+    if (now_us > LOG_BOOT_PHASE_US && now_us - s_log_last_persist_us < (int64_t)LOG_PERSIST_MIN_GAP_MS * 1000) {
+        return; /*!< 运行期节流：只打控制台，不落盘 */
+    }
+    s_log_last_persist_us = now_us;
+    s_log_appends++;
 
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
@@ -259,8 +281,16 @@ void diag_log_event(const char *fmt, ...)
         memcpy(buf + used, line, line_len);
         buf[used + line_len]     = '\n';
         buf[used + line_len + 1] = '\0';
+        /*!< 量一次这次 NVS 写入的墙钟耗时。flash 擦写期间中断被屏蔽，若这里出现
+         *   几十~几百 ms 的读数，就直接坐实"flash 擦写 ⇒ 中断被屏蔽 ⇒ INT WDT"这条链。 */
+        const int64_t t0 = esp_timer_get_time();
         if (nvs_set_str(h, LOG_KEY, buf) == ESP_OK) {
             nvs_commit(h);
+        }
+        const uint32_t took_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+        if (took_ms >= 20) {
+            ESP_LOGW("DIAGLOG", "NVS write took %u ms (flash op, interrupts masked) <== suspect",
+                     (unsigned)took_ms);
         }
     }
     nvs_close(h);

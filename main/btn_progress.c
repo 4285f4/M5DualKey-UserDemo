@@ -419,6 +419,11 @@ static void _report(hid_report_t report)
             const int64_t t0 = esp_timer_get_time();
             ble_hid_keyboard_report(report);
             send_ms_record(&s_ble_send_ms_last, &s_ble_send_ms_max, &s_ble_send_cnt, t0);
+            /*!< 控制台留痕（2026-09-15 加）：BLE 上报是"按下 → 送达"里唯一会**同步阻塞**
+             *   的一段 —— esp_hid 的 WAIT_CB 就是 xSemaphoreTake(portMAX_DELAY) 等 GATT
+             *   确认。若下一步还崩，日志会停在这一条之前，那就说明卡在协议栈而非 NVS。 */
+            ESP_LOGI("btn_progress", "ble send id=%d took=%ums", (int)report.report_id,
+                     (unsigned)s_ble_send_ms_last);
             break;
         }
         case USB_CDC_REPORT:
@@ -434,6 +439,8 @@ static void _report(hid_report_t report)
                 const int64_t t0 = esp_timer_get_time();
                 ble_hid_keyboard_report(report);
                 send_ms_record(&s_ble_send_ms_last, &s_ble_send_ms_max, &s_ble_send_cnt, t0);
+                ESP_LOGI("btn_progress", "ble send(ALL) id=%d took=%ums", (int)report.report_id,
+                         (unsigned)s_ble_send_ms_last);
             }
             break;
         default:

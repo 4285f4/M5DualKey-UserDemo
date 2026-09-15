@@ -2200,11 +2200,23 @@ static void device_status_task(void *pvParameters)
             update_power_status(NULL);
         }
         tick++;
-        /*!< ---- 诊断取证（见函数头说明） ---- */
+        /*!< ---- 诊断取证（见函数头说明）----
+         *   🔴 2026-09-15 现场定案：这四条**只打控制台，绝不落 NVS**。
+         *   证据链：串口 ROM `rst:0x8 (TG1WDT_SYS_RST)` + NVS `reason=5`，两者都是
+         *   ESP_RST_INT_WDT（MWDT1/TG1）；而 panic 是**一个字都没打出来**。
+         *   IDF 的 int_wdt.c 把 INT WDT 配成 stage0=300ms(中断)、stage1=600ms(硬件复位)，
+         *   且 S3 的 panic 入口是 level-4 的 `xt_highint4` ⇒ 只有当**中断被屏蔽在 level 4
+         *   以上、且连续 ≥600ms** 时，才会出现"无转储、直接 TG1WDT 硬复位"。
+         *   本项目运行期唯一的 flash 写入者就是 NVS 诊断日志，而 flash 擦写期间 IDF 会
+         *   `portDISABLE_INTERRUPTS`（Xtensa 上是 RSIL 15）+ stall 另一个核等它响应 ⇒
+         *   正好制造出这个"中断被屏蔽 600ms"的窗口。
+         *   本函数原来最要命的是 KEYPIN 那条：**只限条数、不限时间**，快速按键时 1Hz 轮询
+         *   每次都看到跳变 ⇒ 连续重写整段（可达 2000 字符）日志 blob ⇒ 连续 flash 擦写。
+         *   蓝牙档插上 USB 走 USB-Serial-JTAG 就能实时看这些行（.workbuddy/console_capture.py）。 */
         if ((int)g_connect_status != last_conn) {
             if (last_conn >= 0 && conn_evt < 12) { /*!< 首轮只记基线；限 12 条防刷屏 */
-                diag_log_event("BLECONN stat=%d adv=%d up=%llds", (int)g_connect_status, (int)g_ble_adv_status,
-                               (long long)(esp_timer_get_time() / 1000000));
+                ESP_LOGI(TAG, "BLECONN stat=%d adv=%d up=%llds", (int)g_connect_status, (int)g_ble_adv_status,
+                         (long long)(esp_timer_get_time() / 1000000));
                 conn_evt++;
             }
             last_conn = (int)g_connect_status;
@@ -2213,11 +2225,10 @@ static void device_status_task(void *pvParameters)
             const int l0  = gpio_get_level(GPIO_NUM_0);
             const int l17 = gpio_get_level(GPIO_NUM_17);
             if (l0 != last_lvl0 || l17 != last_lvl17) {
-                /*!< 首次只记基线（不占配额）；之后每次变化最多记 10 条，避免
-                 *   抖动时把 NVS 单次开机的追加配额（LOG_MAX_APPENDS）吃光。 */
+                /*!< 首次只记基线；之后每次变化最多记 10 条，避免刷屏。 */
                 if (last_lvl0 >= 0 && g_key_pin_changes < 10) {
-                    diag_log_event("KEYPIN lvl0=%d lvl17=%d up=%llds", l0, l17,
-                                   (long long)(esp_timer_get_time() / 1000000));
+                    ESP_LOGI(TAG, "KEYPIN lvl0=%d lvl17=%d up=%llds", l0, l17,
+                             (long long)(esp_timer_get_time() / 1000000));
                     g_key_pin_changes++;
                 }
                 last_lvl0  = l0;
@@ -2226,21 +2237,19 @@ static void device_status_task(void *pvParameters)
         }
         if (g_key_cb_count != last_cb) {
             const int64_t now_us = esp_timer_get_time();
-            if (now_us - cb_log_us >= 5000000) { /*!< 节流：≥5s 一条（见函数内注释） */
-                diag_log_event("KEYCB n=%u flash=%u", (unsigned)g_key_cb_count, (unsigned)g_key_flash_count);
+            if (now_us - cb_log_us >= 5000000) { /*!< 节流：≥5s 一条 */
+                ESP_LOGI(TAG, "KEYCB n=%u flash=%u", (unsigned)g_key_cb_count, (unsigned)g_key_flash_count);
                 cb_log_us = now_us;
             }
             last_cb = g_key_cb_count;
         }
-        /*!< 按键延迟（省电 ISR → keyboard_cb）镜像进 NVS。
-         *   蓝牙档没有控制台、还得切到 WiFi 档才能读 /diag，而那次切档要断电重启 ⇒
-         *   纯 RAM 统计跨不过去，必须落盘。只在"最大值变大"时记一次，且 ≥30s 间隔、
+        /*!< 按键延迟（省电 ISR → keyboard_cb）。只在"最大值变大"时记一次，且 ≥30s 间隔、
          *   单次开机 ≤8 条 —— 对"取最大值"这种统计来说没有信息损失。 */
         if (g_key_edge_ms_max > lat_logged) {
             const int64_t now_us = esp_timer_get_time();
             if (lat_evt < 8 && now_us - lat_log_us >= 30000000) {
-                diag_log_event("KEYLAT isr->cb last=%ums max=%ums cnt=%u", (unsigned)g_key_edge_ms_last,
-                               (unsigned)g_key_edge_ms_max, (unsigned)g_key_edge_cnt);
+                ESP_LOGI(TAG, "KEYLAT isr->cb last=%ums max=%ums cnt=%u", (unsigned)g_key_edge_ms_last,
+                         (unsigned)g_key_edge_ms_max, (unsigned)g_key_edge_cnt);
                 lat_logged = g_key_edge_ms_max;
                 lat_log_us = now_us;
                 lat_evt++;
