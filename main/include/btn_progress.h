@@ -65,6 +65,37 @@ void btn_progress_init(void);
  */
 void btn_progress_tick(void);
 
+/* ---------- 按键时延取证（纯 RAM，仅本次运行有效）----------
+ *
+ * 2026-09-15 实测现象：OFF/WiFi 档插线连电脑时按键"将近一秒才反应"，而蓝牙档正常。
+ * 静态分析覆盖了从扫描到上报的整条链路都推不出 1 秒，因此改用实测分辨：
+ *
+ *   - 快速点按（物理按住约 100ms）若被量成约 1000ms → 按下/松手边沿被晚检出，
+ *     问题在扫描 / GPIO 唤醒路径；
+ *   - 若被量成约 100ms → 边沿是准的，问题在报告送达（USB 栈 / 多通道竞争）。
+ *
+ * `cb_gap_ms_max` 是同一结论的旁证：按住期间相邻回调间隔若远大于扫描周期（1ms），
+ * 说明扫描任务被长时间饿过。
+ *
+ * 只写 RAM、不落盘 —— 复现场景与读 /diag 都在 WiFi 档，不需要跨重启保留。
+ */
+typedef struct {
+    uint32_t tap_hold_ms_last;  /**< 最近一次短按的实测按住时长 */
+    uint32_t tap_hold_ms_max;   /**< 全部短按里的最大值 */
+    uint32_t tap_count;         /**< 短按次数 */
+    uint32_t long_fire_ms_last; /**< 最近一次长按触发时的按住时长 */
+    uint32_t long_count;        /**< 长按触发次数 */
+    uint32_t cb_gap_ms_max;     /**< 按住期间相邻按键回调间隔的最大值 */
+    uint32_t cb_down_count;     /**< 参与统计的回调次数 */
+} btn_latency_stats_t;
+
+/**
+ * @brief 取出按键时延取证快照（纯 RAM 读取，可随时调用）。
+ *
+ * @param out 输出结构体，调用方分配。
+ */
+void btn_progress_get_latency_stats(btn_latency_stats_t *out);
+
 /**
  * @brief Set the report type for button progress.
  *

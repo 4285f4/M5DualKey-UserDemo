@@ -15,6 +15,7 @@ extern "C" {
 #include "nvs_flash.h"
 #include "bsp/esp-bsp.h"
 #include "settings.h"
+#include "btn_progress.h"
 #include "rgb_matrix.h"
 #include "esp_timer.h"
 #include "tinyusb_hid.h"
@@ -534,7 +535,24 @@ static esp_err_t diag_get_handler(httpd_req_t *req)
     char *boot = diag_boot_load();
     /*!< NVS 事件日志：唯一能扛住"OFF 档断电"的证据（RTC 内存会被清零）。 */
     char *log = diag_log_load();
-    if (txt == NULL && boot == NULL && log == NULL) {
+
+    /*!< 按键时延取证（纯 RAM，只对本次运行有效）。判据见 btn_progress.h：
+     *   快速点按若被量成约 1000ms → 边沿晚检出；若约 100ms → 延迟在报告送达。 */
+    btn_latency_stats_t lat;
+    btn_progress_get_latency_stats(&lat);
+    char *lat_txt = (char *)malloc(320);
+    if (lat_txt != NULL) {
+        snprintf(lat_txt, 320,
+                 "\n--- key latency (RAM, this session only) ---\n"
+                 "short tap   : last %u ms   max %u ms   count %u\n"
+                 "long  fire  : last %u ms   count %u\n"
+                 "hold cb gap : max %u ms    (%u callbacks while key was down)\n",
+                 (unsigned)lat.tap_hold_ms_last, (unsigned)lat.tap_hold_ms_max, (unsigned)lat.tap_count,
+                 (unsigned)lat.long_fire_ms_last, (unsigned)lat.long_count, (unsigned)lat.cb_gap_ms_max,
+                 (unsigned)lat.cb_down_count);
+    }
+
+    if (txt == NULL && boot == NULL && log == NULL && lat_txt == NULL) {
         return httpd_resp_send(req,
                                "no diag record.\n"
                                "Run the device in BLE position first, then flip the DIP switch to WiFi\n"
@@ -562,6 +580,10 @@ static esp_err_t diag_get_handler(httpd_req_t *req)
         err = httpd_resp_send_chunk(req, txt, HTTPD_RESP_USE_STRLEN);
     }
     free(txt);
+    if (err == ESP_OK && lat_txt != NULL) {
+        err = httpd_resp_send_chunk(req, lat_txt, HTTPD_RESP_USE_STRLEN);
+    }
+    free(lat_txt);
     if (err == ESP_OK) {
         err = httpd_resp_send_chunk(req, NULL, 0); /*!< 结束 chunked 响应 */
     }
@@ -2809,8 +2831,18 @@ void app_main(void)
     /*!< 蓝牙档 = 纯蓝牙翻页器，关掉一切用不上的常驻负载。
      *   开机时判定一次即可：跨越蓝牙档/非蓝牙档边界会 esp_restart()（见 adc_switch_task）。 */
     const bool ble_only_mode = !dip_switch_wifi_enabled(switch_pos);
-    ESP_LOGI(TAG, "DIP switch position at boot: %d (%s)", switch_pos,
-             ble_only_mode ? "BLE only" : "WiFi enabled");
+    /*!< OFF(中间) 档 = 有线档：只启用 USB-HID。
+     *   2026-09-15 用户实测定下的三档分工：
+     *     中间 OFF 档 → 仅 USB-HID（禁 WiFi、禁蓝牙）
+     *     WiFi 档     → WiFi + 蓝牙（禁 USB-HID）
+     *     BLE 档      → 仅蓝牙
+     *   动机是实测到的"双通道同时上报"：USB-HID 与蓝牙同时连到同一台主机时，一次按键
+     *   会被两条通道各送一次（光标跳两格）。只要任一档位保证"同时只有一条通道在工作"，
+     *   这个冲突就不可能发生 —— 这比在按键逻辑里做仲裁可靠得多。
+     *   OFF 档由 USB 供电（中间档切断电池），所以那一档不需要考虑省电。 */
+    const bool usb_only_mode = (switch_pos == DIP_SWITCH_POS_CENTER);
+    ESP_LOGI(TAG, "DIP switch position at boot: %d (ble_only=%d usb_only=%d)", switch_pos, (int)ble_only_mode,
+             (int)usb_only_mode);
 
     xTaskCreate(adc_switch_task, "adc_switch_task", 4096, handle, 5, NULL);
 
@@ -2826,8 +2858,8 @@ void app_main(void)
      *   子设备时永远等不到回应，每次都会跑满超时。停用后可省掉双 UART 时钟与这部分
      *   空转，也让系统有机会进入更长的空闲。
      *   翻页器场景用不到扩展口；需要时把拨码拨到 WiFi 档即可恢复。 */
-    if (ble_only_mode) {
-        ESP_LOGI(TAG, "BLE-only: Chain 扩展总线不初始化 (双 UART / 扫描任务均不启动)");
+    if (ble_only_mode || usb_only_mode) {
+        ESP_LOGI(TAG, "Chain 扩展总线不初始化 (只有 WiFi 档保留双 UART / 扫描任务)");
     } else {
         chain_bus_init();
     }
@@ -2868,8 +2900,11 @@ void app_main(void)
     //         break;
     // }
 
-    /*!< 蓝牙档只开启蓝牙: 跳过 WiFi 与网页服务以省电, 其余档位维持原行为 */
-    if (!ble_only_mode) {
+    /*!< WiFi + 网页服务：只有 WiFi 档开启。
+     *   蓝牙档跳过是为了省电；OFF 档跳过是因为那一档的职责只是 USB 键盘。
+     *   连带效果：WiFi 档不再初始化 TinyUSB（见下方），原生 USB-Serial-JTAG 就能重新
+     *   拿到 USB PHY —— 那一档的插线日志因此是可读的，调试时很有用。 */
+    if (!ble_only_mode && !usb_only_mode) {
         // 初始化WiFi
         wifi_init_sta();
 
@@ -2878,29 +2913,38 @@ void app_main(void)
 
         // 启动WebSocket状态更新任务
         xTaskCreate(websocket_task, "websocket_task", 1024 * 10, NULL, 5, &websocket_task_handle);
-    } else {
+    } else if (ble_only_mode) {
         ESP_LOGI(TAG, "DIP switch is in BLE position: WiFi/HTTP disabled, BLE only");
         // 无网页服务时仍需刷新设备状态, 否则 BLE 电量上报不会触发
         xTaskCreate(device_status_task, "device_status_task", 4096, NULL, 5, NULL);
         /*!< 只在 BLE 档启动功耗采样任务。WiFi 档故意不启动：它每 5min 会把快照
          *   写进 NVS，若在 WiFi 档也跑，切回 BLE 档时就会把刚测到的数据覆盖掉。 */
         diag_power_start();
+    } else {
+        ESP_LOGI(TAG, "DIP switch is in OFF position: USB-HID only (WiFi/HTTP/BLE disabled)");
     }
 
-    /*!< USB-OTG / TinyUSB：蓝牙档下不启动。
+    /*!< USB-OTG / TinyUSB：只有 OFF(中间) 档启用，即"有线键盘"形态。
      *   tinyusb_hid_init() 会拉起 dwc2 驱动并使能 USB-OTG PHY，而该驱动在未接主机时
      *   也不会门控 PHY 时钟（dwc2_common.c 清掉 STOPPCLK/GATEHCLK），PHY 会持续耗电；
      *   同时 USB 协议栈要求 48MHz 时钟域常开，会阻止系统进入更低的功耗状态。
-     *   注意：日志与烧录走的是原生 USB-Serial-JTAG（PID 303A:1001），与 TinyUSB
-     *   （PID 303A:8000）是两条独立通道，跳过 TinyUSB 不影响插线看日志/烧录。
-     *   需要当 USB 键盘用或接 Chain 子设备时，拨到 WiFi 档重启即可。 */
-    if (ble_only_mode) {
-        ESP_LOGI(TAG, "BLE-only: TinyUSB 与 USB-OTG PHY 不初始化 (日志仍走原生 USB-Serial-JTAG)");
-    } else {
+     *   WiFi / 蓝牙档因此都不启动它 —— 这两档的键盘要走无线，正是本次要消除的
+     *   "USB-HID 与蓝牙同时上报同一台主机"的冲突源。
+     *   日志与烧录走原生 USB-Serial-JTAG（PID 303A:1001），与 TinyUSB（303A:8000）
+     *   是两条独立通道：不初始化 TinyUSB 时 USJ 就能独占 PHY，插线日志反而可读。 */
+    if (usb_only_mode) {
         tinyusb_hid_init();
+        ESP_LOGI(TAG, "USB-only: TinyUSB HID 启用 (WiFi / 蓝牙均不启动)");
+    } else {
+        ESP_LOGI(TAG, "TinyUSB 与 USB-OTG PHY 不初始化 (WiFi/BLE 档禁 USB-HID)");
     }
     // tinyusb_cdc_init(NULL, NULL);
-    ble_hid_init();
+    /*!< 蓝牙 HID：BLE 档 + WiFi 档。OFF 档不启动，避免与 USB-HID 同时向同一台主机上报。 */
+    if (!usb_only_mode) {
+        ble_hid_init();
+    } else {
+        ESP_LOGI(TAG, "OFF position: BLE HID 不初始化");
+    }
 
     rgb_matrix_mode(2);
 

@@ -107,6 +107,18 @@ static int64_t custom_right_press_us = 0;
 static volatile bool custom_left_long_fired  = false;
 static volatile bool custom_right_long_fired = false;
 
+// ---- 按键时延取证（纯 RAM，见 btn_progress.h 的说明）----
+// 目的：分辨"将近一秒才反应"发生在边沿检测还是报告送达，不写 flash。
+static uint32_t s_tap_hold_ms_last    = 0;
+static uint32_t s_tap_hold_ms_max     = 0;
+static uint32_t s_tap_count           = 0;
+static uint32_t s_long_fire_ms_last   = 0;
+static uint32_t s_long_count          = 0;
+static uint32_t s_cb_gap_ms_max       = 0;
+static uint32_t s_cb_down_count       = 0;
+static int64_t  s_last_cb_us          = 0;
+static bool     s_prev_cb_had_key     = false;
+
 // ---- 修饰键位掩码 ----
 #define MODIFIER_LEFT_CTRL  0x01
 #define MODIFIER_LEFT_SHIFT 0x02
@@ -478,6 +490,22 @@ void btn_progress(keyboard_btn_report_t kbd_report)
 
     s_keys_down = kbd_report.key_pressed_num;
 
+    /*!< 时延取证：统计"按住期间"相邻回调的间隔。扫描周期是 1ms，若这里出现几十上百
+     *   ms，说明扫描任务（或本回调所在的任务）被长时间饿过 —— 这正是"边沿晚检出"
+     *   的形态，与 btn_progress.h 里写的那两个判据配套使用。 */
+    {
+        const int64_t cb_now_us = esp_timer_get_time();
+        if (s_prev_cb_had_key) {
+            const uint32_t gap_ms = (uint32_t)((cb_now_us - s_last_cb_us) / 1000);
+            if (gap_ms > s_cb_gap_ms_max) {
+                s_cb_gap_ms_max = gap_ms;
+            }
+            s_cb_down_count++;
+        }
+        s_last_cb_us      = cb_now_us;
+        s_prev_cb_had_key = (kbd_report.key_pressed_num > 0);
+    }
+
     if (sys_param->report_type == USB_CDC_REPORT) {
         // USB CDC 模式：发送原始键盘数据
         // tinyusb_cdc_send_keyboard_report(kbd_report);
@@ -545,6 +573,12 @@ void btn_progress(keyboard_btn_report_t kbd_report)
                 custom_left_long_fired = false;  // 长按已触发，松手不重复
                 ESP_LOGI("btn_progress", "左键长按已触发, 松手不重复");
             } else {
+                const uint32_t hold_ms = (uint32_t)((now_us - custom_left_press_us) / 1000);
+                s_tap_hold_ms_last     = hold_ms;
+                if (hold_ms > s_tap_hold_ms_max) {
+                    s_tap_hold_ms_max = hold_ms;
+                }
+                s_tap_count++;
                 ESP_LOGI("btn_progress", "左键短按: %lld ms", (long long)((now_us - custom_left_press_us) / 1000));
                 custom_emit_tap(&custom_left_action, &held);
                 tapped = true;
@@ -555,6 +589,12 @@ void btn_progress(keyboard_btn_report_t kbd_report)
                 custom_right_long_fired = false;
                 ESP_LOGI("btn_progress", "右键长按已触发, 松手不重复");
             } else {
+                const uint32_t hold_ms = (uint32_t)((now_us - custom_right_press_us) / 1000);
+                s_tap_hold_ms_last     = hold_ms;
+                if (hold_ms > s_tap_hold_ms_max) {
+                    s_tap_hold_ms_max = hold_ms;
+                }
+                s_tap_count++;
                 ESP_LOGI("btn_progress", "右键短按: %lld ms", (long long)((now_us - custom_right_press_us) / 1000));
                 custom_emit_tap(&custom_right_action, &held);
                 tapped = true;
@@ -782,6 +822,9 @@ void btn_progress_tick(void)
 
     if (left_has_long && custom_left_down && !custom_left_long_fired &&
         (now_us - custom_left_press_us) / 1000 >= (int64_t)custom_long_press_ms) {
+        const uint32_t hold_ms = (uint32_t)((now_us - custom_left_press_us) / 1000);
+        s_long_fire_ms_last    = hold_ms;
+        s_long_count++;
         ESP_LOGI("btn_progress", "左键长按触发: %lld ms", (long long)((now_us - custom_left_press_us) / 1000));
         custom_emit_tap(&custom_left_long_action, &held);
         custom_left_long_fired = true;
@@ -789,10 +832,28 @@ void btn_progress_tick(void)
 
     if (right_has_long && custom_right_down && !custom_right_long_fired &&
         (now_us - custom_right_press_us) / 1000 >= (int64_t)custom_long_press_ms) {
+        const uint32_t hold_ms = (uint32_t)((now_us - custom_right_press_us) / 1000);
+        s_long_fire_ms_last    = hold_ms;
+        s_long_count++;
         ESP_LOGI("btn_progress", "右键长按触发: %lld ms", (long long)((now_us - custom_right_press_us) / 1000));
         custom_emit_tap(&custom_right_long_action, &held);
         custom_right_long_fired = true;
     }
+}
+
+/*!< 时延取证快照（纯 RAM 读取，不碰 flash）。 */
+void btn_progress_get_latency_stats(btn_latency_stats_t *out)
+{
+    if (out == NULL) {
+        return;
+    }
+    out->tap_hold_ms_last  = s_tap_hold_ms_last;
+    out->tap_hold_ms_max   = s_tap_hold_ms_max;
+    out->tap_count         = s_tap_count;
+    out->long_fire_ms_last = s_long_fire_ms_last;
+    out->long_count        = s_long_count;
+    out->cb_gap_ms_max     = s_cb_gap_ms_max;
+    out->cb_down_count     = s_cb_down_count;
 }
 
 void light_progress(void)
