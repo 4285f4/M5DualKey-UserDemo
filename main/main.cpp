@@ -626,7 +626,12 @@ static esp_err_t diag_get_handler(httpd_req_t *req)
                  (unsigned)lat.ble_send_cnt, (unsigned)g_auto_off_min, (unsigned)s_auto_off_idle_s);
     }
 
-    if (txt == NULL && boot == NULL && log == NULL && lat_txt == NULL) {
+    /*!< 运行期即时取证（纯 RAM）：BLE 连接/断开/认证/连接参数 + 灯效路径。
+     *   ⚠️ 这些**只对本次运行有效**，但正因为 WiFi 档同样会初始化 BLE，
+     *   可以在 WiFi 档一边复现"连上又断"、一边实时读，不必依赖 NVS 中转。 */
+    char *rt_txt = diag_rt_report();
+
+    if (txt == NULL && boot == NULL && log == NULL && lat_txt == NULL && rt_txt == NULL) {
         return httpd_resp_send(req,
                                "no diag record.\n"
                                "Run the device in BLE position first, then flip the DIP switch to WiFi\n"
@@ -658,6 +663,10 @@ static esp_err_t diag_get_handler(httpd_req_t *req)
         err = httpd_resp_send_chunk(req, lat_txt, HTTPD_RESP_USE_STRLEN);
     }
     free(lat_txt);
+    if (err == ESP_OK && rt_txt != NULL) {
+        err = httpd_resp_send_chunk(req, rt_txt, HTTPD_RESP_USE_STRLEN);
+    }
+    free(rt_txt);
     if (err == ESP_OK) {
         err = httpd_resp_send_chunk(req, NULL, 0); /*!< 结束 chunked 响应 */
     }
@@ -2304,6 +2313,22 @@ static void key_flash_render(void)
             s_key_flash_overlay = true;
             light_progress_set_flash_overlay(true);
         }
+        /*!< 取证：每个脉冲只记一条 —— 本函数是逐帧调用的（约 100 帧/秒），
+         *   不去重会把 RAM 环形缓冲瞬间刷满、把 BLE 事件挤掉。 */
+        static int64_t s_kf_logged = INT64_MIN / 4;
+        for (int led = 0; led < 2; led++) {
+            const int64_t t = now - s_key_flash_start_us[led];
+            if (t < 0 || t >= span) {
+                continue;
+            }
+            if (s_key_flash_start_us[led] != s_kf_logged) {
+                s_kf_logged = s_key_flash_start_us[led];
+                const uint8_t lvl = (uint8_t)((int64_t)KEY_FLASH_PEAK_LEVEL * (span - t) / span);
+                diag_rt_push(DIAG_RT_LED_KEYFLASH, led, (int)lvl, (int)bsp_ws2812_is_enable(),
+                             (int)(led_strip != NULL));
+            }
+            break;
+        }
     } else if (s_key_flash_overlay) {
         s_key_flash_overlay = false;
         light_progress_set_flash_overlay(false);
@@ -2349,6 +2374,10 @@ static void keyboard_cb(keyboard_btn_handle_t kbd_handle, keyboard_btn_report_t 
             key_flash_trigger(kbd_report.key_data[kbd_report.key_pressed_num - i].input_index);
         }
         g_key_flash_count++; /*!< 诊断：灯效脉冲已触发（能否看见另说，见 /diag 的 LED 行） */
+        /*!< 取证：一次把"灯为什么不亮"的三层状态记全 —— 驱动回调到了(change_num>0)、
+         *   rgb 开关位、挂起位。只在按下边沿记，避免松手回调把 RAM 环刷爆。 */
+        diag_rt_push(DIAG_RT_KEYPRESS, (int)kbd_report.key_change_num, (int)kbd_report.key_pressed_num,
+                     (int)rgb_matrix_is_enabled(), (int)rgb_matrix_get_suspend_state());
     }
 
     // 按键状态变更时，发送立即刷新指令
@@ -2560,7 +2589,10 @@ static void auto_off_breath_once(int up_steps, int down_steps, int step_ms, int 
  *   结束时故意不释放 overlay —— 紧接着就 deep sleep 了。 */
 static void auto_off_blink_warning(void)
 {
-    if (!bsp_ws2812_is_enable() || led_strip == NULL) {
+    const bool en       = bsp_ws2812_is_enable();
+    const bool strip_ok = (led_strip != NULL);
+    diag_rt_push(DIAG_RT_LED_SLEEPIND, (int)en, (int)strip_ok, 0, 0);
+    if (!en || !strip_ok) {
         return;
     }
     light_progress_set_flash_overlay(true);
@@ -2582,11 +2614,19 @@ static void auto_off_blink_warning(void)
  *      修掉那个误武装的唤醒源之后，这段才会真正跑到。 */
 static void auto_off_wake_indication(void)
 {
-    if (!bsp_ws2812_is_enable() || led_strip == NULL) {
+    const bool en       = bsp_ws2812_is_enable();
+    const bool strip_ok = (led_strip != NULL);
+    diag_rt_push(DIAG_RT_LED_WAKEIND, (int)en, (int)strip_ok, 0, 0);
+    if (!en || !strip_ok) {
         return;
     }
     light_progress_set_flash_overlay(true);
-    auto_off_breath_once(16, 22, 22, 90); /*!< 约 0.35s 渐亮 + 0.09s 保持 + 约 0.48s 渐暗 ≈ 0.9s */
+    /*!< 2026-09-15 第三轮：用户反馈"按键唤醒依然没有灯效"。除了"唤醒源被 light sleep
+     *   遗留的定时器抢走"那段旧账（已修），原来 0.9s 的单次呼吸也确实容易被错过 ——
+     *   它发生在开机后 1~2s，用户那时多半正在看电脑屏幕。这里加长到约 1.3s：
+     *     20×26（渐亮 520ms）+ 160（保持）+ 26×26（渐暗 676ms） ≈ 1.36s。
+     *   与睡前的三次呼吸仍用"次数"区分。 */
+    auto_off_breath_once(20, 26, 26, 160);
     light_progress_set_flash_overlay(false);
     refresh_key_colors_from_status(); /*!< 把灯交还给常规渲染（充电指示/按键灯效） */
 }

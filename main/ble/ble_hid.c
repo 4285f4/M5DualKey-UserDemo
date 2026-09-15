@@ -17,6 +17,7 @@
 #include "ble_hid.h"
 #include "esp_mac.h"
 #include "freertos/task.h"
+#include "diag_power.h" /*!< diag_rt_push：BLE 事件只压 RAM，绝不在此写 NVS */
 
 extern uint8_t g_connect_status;
 
@@ -77,6 +78,9 @@ static void ble_hidd_event_callback(void *handler_args, esp_event_base_t base, i
             s_ble_hid_param.is_connected = true;
             g_connect_status             = 2;  // 连接建立
 
+            /*!< 取证：连接建立。与后面的 BLE_DISC 配对看，就能量出"连上多久又断"。 */
+            diag_rt_push(DIAG_RT_BLE_CONNECT, 0, 0, 0, 0);
+
             ESP_LOGI(TAG, "CONNECT");
 
             // 连接建立后，等待50ms让蓝牙协议栈稳定，然后发送初始电量
@@ -112,6 +116,10 @@ static void ble_hidd_event_callback(void *handler_args, esp_event_base_t base, i
         case ESP_HIDD_DISCONNECT_EVENT: {
             s_ble_hid_param.is_connected = false;
             g_connect_status             = 0;  // 连接断开
+            /*!< 取证：断开原因是排查"反复重连"的第一手证据。
+             *   a = HCI reason —— 0x08 = 连接超时(监督超时，多为无线侧漏事件)；
+             *   0x13/0x05/0x16 = 认证/配对类；0x0D/0x0E = 主机主动断开。 */
+            diag_rt_push(DIAG_RT_BLE_DISCONN, (int)param->disconnect.reason, 0, 0, 0);
             ESP_LOGI(TAG, "DISCONNECT: %s",
                      esp_hid_disconnect_reason_str(esp_hidd_dev_transport_get(param->disconnect.dev),
                                                    param->disconnect.reason));

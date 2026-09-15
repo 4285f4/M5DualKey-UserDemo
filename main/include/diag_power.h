@@ -124,3 +124,41 @@ void diag_log_clear(void);
  * @param raw_wifi    WiFi 通道原始值
  */
 void diag_note_dip_view(int switch_pos, int derived, int raw_ble, int raw_wifi);
+
+/* ---------------------------------------------------------------------------
+ * 运行期即时取证（纯 RAM，绝不写 NVS）
+ *
+ * 动机（2026-09-15，排查"蓝牙连上约 1s 又断、反复循环"）：
+ *   第一反应是在 BT 回调里用 diag_log_event 落 NVS，但那有两个副作用 ——
+ *     ① BT 回调里做 NVS 写 = flash 擦写，会停 cache、阻塞协议栈几十 ms，
+ *        本身就可能把连接搞断（"记录问题"变成"制造问题"）；
+ *     ② NVS 分区只有 24KB，事件日志又是"整条 blob 重写"，高频事件会迅速磨损。
+ *   所以运行期事件一律只压 RAM 环形缓冲，由 /diag 现场读出。
+ *
+ * 为什么这样也够用：**WiFi 档同样会初始化 BLE**（main.cpp: `if (!usb_only_mode)
+ *   ble_hid_init();`），因此可以在 WiFi 档一边复现重连、一边实时拉 /diag ——
+ *   完全不需要 NVS 中转。
+ *
+ * ⚠️ 代价：RAM 记录扛不住断电/跨档，只对"本次运行"有效。需要跨档保留的
+ *    关键事件仍走 diag_log_event（NVS）。
+ * ------------------------------------------------------------------------- */
+
+/** 运行期事件种类（diag_rt_push 的 kind 参数）。 */
+enum {
+    DIAG_RT_BLE_CONNECT   = 1,  /*!< 连接建立 */
+    DIAG_RT_BLE_DISCONN   = 2,  /*!< a = HCI disconnect reason（0x08=超时 0x13/0x05=认证类） */
+    DIAG_RT_BLE_AUTH      = 3,  /*!< a = success(0/1), b = fail_reason */
+    DIAG_RT_BLE_ADV_START = 4,  /*!< a = status */
+    DIAG_RT_BLE_CONNPARAM = 5,  /*!< a = status, b = min_int, c = max_int（单位 1.25ms） */
+    DIAG_RT_BLE_SECREQ    = 6,  /*!< 对端发起安全请求 */
+    DIAG_RT_LED_WAKEIND   = 10, /*!< a = ws2812_enable, b = strip_ok */
+    DIAG_RT_LED_KEYFLASH  = 11, /*!< a = led, b = level, c = ws2812_enable, d = strip_ok */
+    DIAG_RT_LED_SLEEPIND  = 12, /*!< a = ws2812_enable, b = strip_ok */
+    DIAG_RT_KEYPRESS      = 13, /*!< a = change_num, b = pressed_num, c = rgb_en, d = suspend */
+};
+
+/** 压入一条运行期取证（RAM，可从中断/回调上下文调用；无阻塞、不写 flash）。 */
+void diag_rt_push(int kind, int a, int b, int c, int d);
+
+/** 把运行期取证 + NVS 占用统计格式化成文本（堆字符串，调用方 free()；失败返回 NULL）。 */
+char *diag_rt_report(void);

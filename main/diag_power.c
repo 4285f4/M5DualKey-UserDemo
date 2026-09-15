@@ -576,3 +576,117 @@ char *diag_boot_load(void)
     fclose(fo);
     return out;
 }
+
+/* ===========================================================================
+ * 运行期即时取证（纯 RAM）
+ *
+ * 见 diag_power.h 的说明。要点：**绝不在这里写 NVS** —— 本模块会被 BT 回调
+ * （BLE 连接/断开/认证、连接参数更新）调用，而 NVS 写 = flash 擦写，
+ * 会停 cache 并阻塞协议栈几十 ms，本身就可能把刚建立的连接搞断。
+ * 所以这里只做一次定长结构体拷贝，由 /diag 现场读出。
+ *
+ * 为什么够用：WiFi 档同样会 `ble_hid_init()`（main.cpp），所以可以一边在
+ * WiFi 档复现"连上又断"、一边实时拉 /diag，完全不需要 NVS 中转。
+ * =========================================================================== */
+
+#define DIAG_RT_MAX 64
+
+typedef struct {
+    uint32_t t_ms;  /*!< 事件时刻（开机后 ms） */
+    int16_t  kind;  /*!< DIAG_RT_* */
+    int16_t  a;
+    int32_t  b, c, d;
+} diag_rt_t;
+
+static diag_rt_t    s_rt[DIAG_RT_MAX];
+static uint32_t     s_rt_n   = 0;
+static portMUX_TYPE s_rt_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void diag_rt_push(int kind, int a, int b, int c, int d)
+{
+    /*!< 临界区里只做结构体拷贝 + 读一次 esp_timer 计数器，开销是微秒级。
+     *   BT 回调可能在 ISR/协议栈任务上下文调用，故用 portMUX 而不是互斥量。 */
+    portENTER_CRITICAL(&s_rt_mux);
+    diag_rt_t *e;
+    if (s_rt_n < DIAG_RT_MAX) {
+        e = &s_rt[s_rt_n++];
+    } else {
+        /*!< 满了就丢掉最旧的一条，保证"最近发生的事"一定在。 */
+        memmove(&s_rt[0], &s_rt[1], sizeof(s_rt[0]) * (DIAG_RT_MAX - 1));
+        e = &s_rt[DIAG_RT_MAX - 1];
+    }
+    e->t_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    e->kind = (int16_t)kind;
+    e->a    = (int16_t)a;
+    e->b    = b;
+    e->c    = c;
+    e->d    = d;
+    portEXIT_CRITICAL(&s_rt_mux);
+}
+
+static const char *rt_kind_name(int k)
+{
+    switch (k) {
+        case DIAG_RT_BLE_CONNECT:
+            return "BLE_CONN";
+        case DIAG_RT_BLE_DISCONN:
+            return "BLE_DISC";
+        case DIAG_RT_BLE_AUTH:
+            return "BLE_AUTH";
+        case DIAG_RT_BLE_ADV_START:
+            return "BLE_ADVST";
+        case DIAG_RT_BLE_CONNPARAM:
+            return "BLE_CONNP";
+        case DIAG_RT_BLE_SECREQ:
+            return "BLE_SECREQ";
+        case DIAG_RT_LED_WAKEIND:
+            return "LED_WAKE";
+        case DIAG_RT_LED_KEYFLASH:
+            return "LED_KFLASH";
+        case DIAG_RT_LED_SLEEPIND:
+            return "LED_SLEEP";
+        case DIAG_RT_KEYPRESS:
+            return "KEYPRESS";
+        default:
+            return "?";
+    }
+}
+
+char *diag_rt_report(void)
+{
+    char  *out = NULL;
+    size_t n   = 0;
+    FILE  *fo  = open_memstream(&out, &n);
+    if (fo == NULL) {
+        return NULL;
+    }
+
+    /*!< NVS 占用：用来判断"日志写满 / 别名空间不够导致蓝牙绑定键写不进去"这类问题。 */
+    nvs_stats_t st;
+    if (nvs_get_stats(NULL, &st) == ESP_OK) {
+        fprintf(fo, "\n--- NVS usage (nvs partition) ---\n");
+        fprintf(fo, "entries total %u  used %u  free %u   namespaces %u\n", (unsigned)st.total_entries,
+                (unsigned)st.used_entries, (unsigned)st.free_entries, (unsigned)st.namespace_count);
+    } else {
+        fprintf(fo, "\n--- NVS usage: nvs_get_stats failed ---\n");
+    }
+
+    fprintf(fo, "\n--- runtime events (RAM only, this session; newest last) ---\n");
+    /*!< 先拷出来再格式化，缩短持锁时间。 */
+    diag_rt_t tmp[DIAG_RT_MAX];
+    portENTER_CRITICAL(&s_rt_mux);
+    const uint32_t cnt = s_rt_n;
+    memcpy(tmp, s_rt, sizeof(tmp));
+    portEXIT_CRITICAL(&s_rt_mux);
+
+    if (cnt == 0) {
+        fprintf(fo, "(none)\n");
+    }
+    for (uint32_t i = 0; i < cnt; i++) {
+        fprintf(fo, "%7ums %-10s a=%-6d b=%-9d c=%-8d d=%d\n", (unsigned)tmp[i].t_ms, rt_kind_name(tmp[i].kind),
+                (int)tmp[i].a, (int)tmp[i].b, (int)tmp[i].c, (int)tmp[i].d);
+    }
+
+    fclose(fo);
+    return out;
+}

@@ -16,6 +16,7 @@
 #include "esp_bt.h"
 #include "esp_bt_main.h"
 #include "ble_hid.h"
+#include "diag_power.h" /*!< diag_rt_push：BLE 事件只压 RAM，绝不在此写 NVS */
 static const char *TAG = "ESP_HID_GAP";
 
 extern int g_connect_status;
@@ -179,6 +180,8 @@ static void ble_gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_p
             } else {
                 ESP_LOGE(TAG, "BLE advertising start failed: %d", param->adv_start_cmpl.status);
             }
+            /*!< 取证：广播是否真的起来了。若这里 status != 0，主机根本扫不到设备。 */
+            diag_rt_push(DIAG_RT_BLE_ADV_START, (int)param->adv_start_cmpl.status, (int)g_connect_status, 0, 0);
             break;
 
         case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
@@ -202,9 +205,13 @@ static void ble_gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_p
                 // if AUTH ERROR,hid maybe don't work.
                 ESP_LOGE(TAG, "BLE GAP AUTH ERROR: 0x%x", param->ble_security.auth_cmpl.fail_reason);
                 g_connect_status = 0;  // 认证失败，连接失败
+                /*!< 取证：认证失败 = "连上又断"的一个高概率真凶（主机侧绑定已过期/
+                 *   配对方式不匹配时，会出现"连上→认证失败→掉线→再连"的循环）。 */
+                diag_rt_push(DIAG_RT_BLE_AUTH, 0, (int)param->ble_security.auth_cmpl.fail_reason, 0, 0);
             } else {
                 ESP_LOGI(TAG, "BLE GAP AUTH SUCCESS");
                 g_connect_status = 2;  // 认证成功，连接建立
+                diag_rt_push(DIAG_RT_BLE_AUTH, 1, 0, 0, 0);
             }
             // ble_hid_task_start_up();
             break;
@@ -241,6 +248,7 @@ static void ble_gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_p
             esp_ble_gap_security_rsp(param->ble_security.ble_req.bd_addr, true);
             // 安全请求表示有设备尝试连接
             g_connect_status = 1;  // 连接中
+            diag_rt_push(DIAG_RT_BLE_SECREQ, 0, 0, 0, 0);
             break;
         case ESP_GAP_BLE_PHY_UPDATE_COMPLETE_EVT:
             ESP_LOGI(TAG, "BLE GAP PHY_UPDATE_COMPLETE PHY: TX: %d RX: %d", param->phy_update.tx_phy,
@@ -249,6 +257,10 @@ static void ble_gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_p
         case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
             ESP_LOGI(TAG, "BLE GAP UPDATE_CONN_PARAMS  min:%d max: %d status:%d", param->update_conn_params.min_int,
                      param->update_conn_params.max_int, param->update_conn_params.status);
+            /*!< 取证：实际协商出来的连接间隔（单位 1.25ms）。间隔越短，休眠/共存下
+             *   漏连接事件导致监督超时的概率越高。 */
+            diag_rt_push(DIAG_RT_BLE_CONNPARAM, (int)param->update_conn_params.status,
+                         (int)param->update_conn_params.min_int, (int)param->update_conn_params.max_int, 0);
             break;
         default:
             ESP_LOGI(TAG, "BLE GAP EVENT %d", event);
