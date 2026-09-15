@@ -35,6 +35,9 @@ extern "C" {
 #include "lwip/inet.h"
 #include "string.h"
 #include <stdlib.h>
+#include <time.h>
+#include "esp_attr.h"
+#include "esp_sleep.h"
 #include "esp_mac.h"
 #include "cJSON.h"
 #include "esp_crc.h"
@@ -123,6 +126,24 @@ static uint16_t g_auto_off_min = AUTO_OFF_DEFAULT_MIN;
 
 /*!< 当前"无连接"已持续秒数（file scope 便于 /diag 观测；判定逻辑见 auto_off_tick）。 */
 static uint32_t s_auto_off_idle_s = 0;
+
+/*!< 深睡取证（放 RTC 域，跨深睡保留；只有"经过中间 OFF 档断电"才会丢）。
+ *
+ *   为什么需要（2026-09-15 实机）：蓝牙档两次自动关机都记到了 BOOT#reason=8
+ *   （= 深睡唤醒），而用户只按过一次键 —— 说明其中一次是**假唤醒**（睡下即被拉起来）。
+ *   可 BLE 档没有控制台，EXT1 细节读不到，所以把这几项落 NVS 事件日志，
+ *   切到 WiFi 档拉 /diag 即可事后取证：
+ *     · ext1 mask  → 究竟哪颗键/哪个脚触发（bit0=Key1/GPIO0, bit17=Key2/GPIO17）
+ *     · 睡了多久   → ≈0s = 睡下即醒（上拉没保持住，引脚浮空被判成低）；
+ *                    数十秒 = 确实睡住了，之后才被误触发
+ *     · 入睡前电平 → 若入睡瞬间该脚已是低，根因直接就是上拉，而不是"睡后漂移"
+ *   ⚠️ 墙钟 time() 在本工程由 RTC 计时器提供（CONFIG_ESP_TIME_FUNCS_USE_RTC_TIMER=y，
+ *   见 build/config/sdkconfig.h），跨深睡连续 —— 直接用它量时长即可，不必碰私有的
+ *   rtc_time_get() / esp_clk_slowclk_cal_get()。 */
+RTC_DATA_ATTR static int64_t  s_ds_enter_epoch = -1; /*!< 入睡瞬间的墙钟秒 */
+RTC_DATA_ATTR static uint32_t s_ds_seq         = 0;  /*!< 累计进入深睡的次序 */
+RTC_DATA_ATTR static int      s_ds_pre_lvl0    = -1; /*!< 入睡瞬间 GPIO0 电平(-1=没采到) */
+RTC_DATA_ATTR static int      s_ds_pre_lvl17   = -1; /*!< 入睡瞬间 GPIO17 电平(-1=没采到) */
 
 /*!< DIP switch (BLE / OFF / WIFI)
  *   蓝牙档(网页显示 right, 即 SWITCH_1/GPIO8)只开启蓝牙以省电, 其余档位维持蓝牙 + WiFi
@@ -2416,35 +2437,87 @@ static void auto_off_config_save(uint16_t minutes)
     ESP_LOGI(TAG, "自动关机超时已保存: %u 分钟 (0=关闭)", (unsigned)minutes);
 }
 
-/*!< 深睡前的灯效提示：两颗灯快闪 3 次（约 0.9s）。
- *   目的是把"设备主动睡了"和"设备死机了"区分开 —— 深睡唤醒 = 重启，当前状态会丢。
+/*!< ---- 自动关机的灯效：睡前"呼吸 3 次" / 唤醒"呼吸 1 次" ----
+ *
+ *   2026-09-15 用户反馈：原来的 130ms 硬闪 3 次"闪得很快，不是很好看"。
+ *   改成**呼吸式** —— 亮度线性渐亮 -> 保持 -> 渐暗，整段约 1.6s，柔和得多。
+ *   两种信号刻意用"次数"区分，用户凭灯就知道当前是睡还是醒：
+ *     · 睡前 = 呼吸 **3 次**（约 1.6s）——"要睡了"
+ *     · 唤醒 = 呼吸 **1 次**（约 0.8s，更慢）——"醒了"
+ *   颜色用暗灰，与充电指示(红/琥珀/绿)、按键灯效(蓝)都区分得开。
  *   不受"按键灯效"开关约束（那是按键反馈的开关），但尊重板级 bsp_ws2812 使能。 */
-#define AUTO_OFF_BLINK_COUNT  3
-#define AUTO_OFF_BLINK_ON_MS  130
-#define AUTO_OFF_BLINK_OFF_MS 130
-#define AUTO_OFF_BLINK_COLOR  0x1E1E1E /*!< 暗白，与充电指示(红/琥珀/绿)、按键灯效(蓝)都区分得开 */
+#define AUTO_OFF_BREATH_PULSES 3
+#define AUTO_OFF_BREATH_COLOR  0x2A2A2A
+#define AUTO_OFF_BREATH_UP     10
+#define AUTO_OFF_BREATH_DOWN   15
+#define AUTO_OFF_BREATH_STEP   14  /*!< ms/步 */
+#define AUTO_OFF_BREATH_HOLD   60  /*!< 峰值保持 */
+#define AUTO_OFF_BREATH_GAP    180 /*!< 两次呼吸之间的间隔 */
 
+/*!< 按 0~255 比例缩放一个 24bit RGB（纯整数，不用浮点） */
+static uint32_t scale_rgb_brightness(uint32_t rgb, uint32_t scale)
+{
+    const uint32_t r = ((rgb >> 16) & 0xFF) * scale / 255u;
+    const uint32_t g = ((rgb >> 8) & 0xFF) * scale / 255u;
+    const uint32_t b = (rgb & 0xFF) * scale / 255u;
+    return (r << 16) | (g << 8) | b;
+}
+
+/*!< 一次呼吸：渐亮 -> 保持 -> 渐暗 -> 回到全黑。返回后灯是灭的。
+ *   ⚠️ 锁只包住"写像素"，绝不跨 vTaskDelay（本项目铁律：否则会饿死渲染任务）。 */
+static void auto_off_breath_once(int up_steps, int down_steps, int step_ms, int hold_ms)
+{
+    for (int i = 1; i <= up_steps; i++) {
+        const uint32_t c = scale_rgb_brightness(AUTO_OFF_BREATH_COLOR, (uint32_t)i * 255u / (uint32_t)up_steps);
+        light_progress_lock();
+        set_key_rgb_color_locked(0, c);
+        set_key_rgb_color_locked(1, c);
+        light_progress_unlock();
+        vTaskDelay(pdMS_TO_TICKS(step_ms));
+    }
+    vTaskDelay(pdMS_TO_TICKS(hold_ms));
+    for (int i = down_steps; i >= 0; i--) {
+        const uint32_t c = scale_rgb_brightness(AUTO_OFF_BREATH_COLOR, (uint32_t)i * 255u / (uint32_t)down_steps);
+        light_progress_lock();
+        set_key_rgb_color_locked(0, c);
+        set_key_rgb_color_locked(1, c);
+        light_progress_unlock();
+        vTaskDelay(pdMS_TO_TICKS(step_ms));
+    }
+}
+
+/*!< 深睡前提示：三次呼吸。
+ *   必须先接管渲染：light_progress() 见到 overlay 才会跳过 rgb_matrix_task()，
+ *   否则它每 10~200ms 整条刷新一次，会把这里写的像素冲掉。
+ *   结束时故意不释放 overlay —— 紧接着就 deep sleep 了。 */
 static void auto_off_blink_warning(void)
 {
     if (!bsp_ws2812_is_enable() || led_strip == NULL) {
         return;
     }
-    /*!< 必须先接管渲染：light_progress() 见到 overlay 才会跳过 rgb_matrix_task()，
-     *   否则它每 10~200ms 整条刷新一次，会把这里写的像素冲掉。 */
     light_progress_set_flash_overlay(true);
-    for (int i = 0; i < AUTO_OFF_BLINK_COUNT; i++) {
-        light_progress_lock();
-        set_key_rgb_color_locked(0, AUTO_OFF_BLINK_COLOR);
-        set_key_rgb_color_locked(1, AUTO_OFF_BLINK_COLOR);
-        light_progress_unlock();
-        vTaskDelay(pdMS_TO_TICKS(AUTO_OFF_BLINK_ON_MS));
-
-        light_progress_lock();
-        set_key_rgb_color_locked(0, 0x000000);
-        set_key_rgb_color_locked(1, 0x000000);
-        light_progress_unlock();
-        vTaskDelay(pdMS_TO_TICKS(AUTO_OFF_BLINK_OFF_MS));
+    for (int p = 0; p < AUTO_OFF_BREATH_PULSES; p++) {
+        auto_off_breath_once(AUTO_OFF_BREATH_UP, AUTO_OFF_BREATH_DOWN, AUTO_OFF_BREATH_STEP,
+                             AUTO_OFF_BREATH_HOLD);
+        if (p + 1 < AUTO_OFF_BREATH_PULSES) {
+            vTaskDelay(pdMS_TO_TICKS(AUTO_OFF_BREATH_GAP));
+        }
     }
+}
+
+/*!< 深睡唤醒提示：**一次**更慢的呼吸，与睡前的三次区分开。
+ *   2026-09-15 用户问"唤醒时没有灯效吗" —— 之前确实没有。电池态下两颗灯本来就常灭
+ *   （默认键色 0x000000），所以"睡着"和"醒着"从灯上完全分不出来。
+ *   ⚠️ 调用点必须在 bsp_ws2812_init() + bsp_ws2812_enable(true) 之后，否则 led_strip 还是空。 */
+static void auto_off_wake_indication(void)
+{
+    if (!bsp_ws2812_is_enable() || led_strip == NULL) {
+        return;
+    }
+    light_progress_set_flash_overlay(true);
+    auto_off_breath_once(20, 28, 15, 40); /*!< 约 0.3s 渐亮 + 约 0.4s 渐暗 */
+    light_progress_set_flash_overlay(false);
+    refresh_key_colors_from_status(); /*!< 把灯交还给常规渲染（充电指示/按键灯效） */
 }
 
 /*!< 进入深度睡眠；唤醒源 = 两个按键拉低（ext1, ANY_LOW）。
@@ -2464,6 +2537,13 @@ static void power_enter_deep_sleep(void)
 
     auto_off_blink_warning();
 
+    /*!< 取证：必须在 rtc_gpio_init() 把引脚切到 RTC 复用**之前**采，
+     *   否则 gpio_get_level() 读的是已断开的数字输入。 */
+    s_ds_pre_lvl0    = gpio_get_level(GPIO_NUM_0);
+    s_ds_pre_lvl17   = gpio_get_level(GPIO_NUM_17);
+    s_ds_enter_epoch = (int64_t)time(NULL);
+    s_ds_seq++;
+
     const uint64_t wake_mask = (1ULL << GPIO_NUM_0) | (1ULL << GPIO_NUM_17);
     esp_err_t      err       = esp_sleep_enable_ext1_wakeup_io(wake_mask, ESP_EXT1_WAKEUP_ANY_LOW);
     if (err != ESP_OK) {
@@ -2477,6 +2557,15 @@ static void power_enter_deep_sleep(void)
     rtc_gpio_init(GPIO_NUM_17);
     rtc_gpio_pulldown_dis(GPIO_NUM_17);
     rtc_gpio_pullup_en(GPIO_NUM_17);
+
+    /*!< 把"入睡瞬间"的状态也落 NVS：假唤醒会让设备重启，而蓝牙档没有控制台 ——
+     *   这一行是唯一能证明"睡下去时引脚到底是高还是低"的证据。
+     *   rtc(lvl…) 是**配好 RTC 上拉之后**再读一次，用来验证上拉真的把电平拉住了
+     *   （若是 0，说明问题在休眠前的上拉，而不是"睡后漂移"）。 */
+    diag_log_event("SLEEP#%u pre(lvl0=%d lvl17=%d) rtc(lvl0=%u lvl17=%u) mask=0x%llx",
+                   (unsigned)s_ds_seq, s_ds_pre_lvl0, s_ds_pre_lvl17,
+                   (unsigned)rtc_gpio_get_level(GPIO_NUM_0), (unsigned)rtc_gpio_get_level(GPIO_NUM_17),
+                   (unsigned long long)wake_mask);
 
     vTaskDelay(pdMS_TO_TICKS(50)); /*!< 让最后两条日志落出去 */
 
@@ -3130,13 +3219,25 @@ void app_main(void)
     auto_off_config_load();
 
     /*!< 唤醒原因：区分"冷启动"与"从自动关机深睡被按键唤醒"。
-     *   EXT1 唤醒时再打印具体是哪颗键，便于确认 ext1 配置真的生效了。 */
+     *   EXT1 唤醒时把细节落 NVS —— 蓝牙档没有控制台，这是唯一的事后取证通道
+     *   （日志里 SLEEP# 一行是本次入睡前写的，WAKE1 一行是此刻写的，对照着看）。 */
+    bool woke_from_deep_sleep = false;
     {
         const esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
         if (cause == ESP_SLEEP_WAKEUP_EXT1) {
-            const uint64_t st = esp_sleep_get_ext1_wakeup_status();
-            ESP_LOGW(TAG, "从深度睡眠唤醒: EXT1, mask=0x%llx (bit0=Key1/GPIO0, bit17=Key2/GPIO17)",
-                     (unsigned long long)st);
+            woke_from_deep_sleep     = true;
+            const uint64_t st        = esp_sleep_get_ext1_wakeup_status();
+            const int64_t  now_epoch = (int64_t)time(NULL);
+            /*!< 墙钟由 RTC 计时器提供，跨深睡连续，可直接作差（见文件头部说明）。 */
+            const int64_t slept_s = (s_ds_enter_epoch > 0) ? (now_epoch - s_ds_enter_epoch) : -1;
+            ESP_LOGW(TAG, "从深度睡眠唤醒: EXT1, mask=0x%llx (bit0=Key1/GPIO0, bit17=Key2/GPIO17), 睡了 %llds",
+                     (unsigned long long)st, (long long)slept_s);
+            /*!< ⚠️ 这里用 rtc_gpio_get_level()：引脚仍停在入睡前设的 RTC 复用上，
+             *   数字输入是断开的，gpio_get_level() 读不到真实电平。 */
+            diag_log_event("WAKE1 seq=%u ext1=0x%llx slept=%llds pre(lvl0=%d lvl17=%d) now(lvl0=%u lvl17=%u)",
+                           (unsigned)s_ds_seq, (unsigned long long)st, (long long)slept_s, s_ds_pre_lvl0,
+                           s_ds_pre_lvl17, (unsigned)rtc_gpio_get_level(GPIO_NUM_0),
+                           (unsigned)rtc_gpio_get_level(GPIO_NUM_17));
         } else {
             ESP_LOGI(TAG, "启动/唤醒原因: %d (%s)", (int)cause,
                      cause == ESP_SLEEP_WAKEUP_UNDEFINED ? "冷启动/复位" : "非深睡唤醒");
@@ -3205,6 +3306,12 @@ void app_main(void)
     bsp_rgb_matrix_init();
     bsp_ws2812_enable(true);
     xTaskCreate(light_progress_task, "light_progress_task", 4096, NULL, 5, &light_progress_task_handle);
+
+    /*!< 从自动关机深睡被按键唤醒时给一次灯效反馈（呼吸一次，与睡前的三次区分开）。
+     *   放在这里而不是更早：此刻 WS2812 与渲染任务才就绪，led_strip 才有值。 */
+    if (woke_from_deep_sleep) {
+        auto_off_wake_indication();
+    }
 
     /*!< Init keyboard key monitor */
     bsp_keyboard_init(&kbd_handle, NULL);
