@@ -9,6 +9,7 @@ extern "C" {
 #include "esp_log.h"
 #include "esp_pm.h"
 #include "esp_sleep.h"
+#include "esp_system.h" /*!< esp_reset_reason() / ESP_RST_DEEPSLEEP（深睡取证用） */
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/timers.h"
@@ -2439,20 +2440,32 @@ static void auto_off_config_save(uint16_t minutes)
 
 /*!< ---- 自动关机的灯效：睡前"呼吸 3 次" / 唤醒"呼吸 1 次" ----
  *
- *   2026-09-15 用户反馈：原来的 130ms 硬闪 3 次"闪得很快，不是很好看"。
- *   改成**呼吸式** —— 亮度线性渐亮 -> 保持 -> 渐暗，整段约 1.6s，柔和得多。
- *   两种信号刻意用"次数"区分，用户凭灯就知道当前是睡还是醒：
- *     · 睡前 = 呼吸 **3 次**（约 1.6s）——"要睡了"
- *     · 唤醒 = 呼吸 **1 次**（约 0.8s，更慢）——"醒了"
- *   颜色用暗灰，与充电指示(红/琥珀/绿)、按键灯效(蓝)都区分得开。
+ *   2026-09-15 用户两次反馈后定下的观感：
+ *   ① 首版 130ms 硬闪 3 次 —— "闪得很快，不是很好看"；
+ *   ② 二版呼吸（14ms/步，约 1.6s 三段）—— 仍"闪得很快，完全没看出呼吸效果"，
+ *      而且"灯还是蓝色的"。
+ *
+ *   **为什么暗灰看着是蓝的**：二版用的是等值 RGB `0x2A2A2A`。WS2812 的三色
+ *   LED 在低电流下发光效率并不一致（蓝/绿通道比红更早被点亮），等值低亮度
+ *   在实物上会被看成偏蓝的白。所以这次**直接给纯红** —— 观感明确、不会串色，
+ *   和充电指示（红/琥珀/绿，但常亮）、按键灯效（纯蓝脉冲）也区分得开。
+ *   红色通道单色发光，亮度爬升过程肉眼最容易分辨"渐亮渐暗"。
+ *
+ *   **为什么放慢**：14ms/步 时一次呼吸只有约 0.41s，人眼会当成"闪一下"而不是
+ *   "呼吸一下"。这次把步长放到 22ms、并把渐亮/渐暗步数加上去：
+ *     单次呼吸 ≈ 14×22（渐亮 308ms）+ 150（保持）+ 18×22（渐暗 396ms） ≈ 854ms，
+ *     三次 + 两次间隔(260ms) ≈ **3.1s** —— 明显是一段"呼吸"，不是眨眼。
+ *   两种信号仍用"次数"区分，用户凭灯就知道当前是睡还是醒：
+ *     · 睡前 = 呼吸 **3 次**（约 3.1s）——"要睡了"
+ *     · 唤醒 = 呼吸 **1 次**（约 0.9s，单次更长）——"醒了"
  *   不受"按键灯效"开关约束（那是按键反馈的开关），但尊重板级 bsp_ws2812 使能。 */
 #define AUTO_OFF_BREATH_PULSES 3
-#define AUTO_OFF_BREATH_COLOR  0x2A2A2A
-#define AUTO_OFF_BREATH_UP     10
-#define AUTO_OFF_BREATH_DOWN   15
-#define AUTO_OFF_BREATH_STEP   14  /*!< ms/步 */
-#define AUTO_OFF_BREATH_HOLD   60  /*!< 峰值保持 */
-#define AUTO_OFF_BREATH_GAP    180 /*!< 两次呼吸之间的间隔 */
+#define AUTO_OFF_BREATH_COLOR  0x600000 /*!< 纯红，峰值 R=96/255：亮但不刺眼 */
+#define AUTO_OFF_BREATH_UP     14       /*!< 渐亮步数 */
+#define AUTO_OFF_BREATH_DOWN   18       /*!< 渐暗步数 */
+#define AUTO_OFF_BREATH_STEP   22       /*!< ms/步（由 14 放慢到 22） */
+#define AUTO_OFF_BREATH_HOLD   150      /*!< 峰值保持 */
+#define AUTO_OFF_BREATH_GAP    260      /*!< 两次呼吸之间的间隔 */
 
 /*!< 按 0~255 比例缩放一个 24bit RGB（纯整数，不用浮点） */
 static uint32_t scale_rgb_brightness(uint32_t rgb, uint32_t scale)
@@ -2508,14 +2521,17 @@ static void auto_off_blink_warning(void)
 /*!< 深睡唤醒提示：**一次**更慢的呼吸，与睡前的三次区分开。
  *   2026-09-15 用户问"唤醒时没有灯效吗" —— 之前确实没有。电池态下两颗灯本来就常灭
  *   （默认键色 0x000000），所以"睡着"和"醒着"从灯上完全分不出来。
- *   ⚠️ 调用点必须在 bsp_ws2812_init() + bsp_ws2812_enable(true) 之后，否则 led_strip 还是空。 */
+ *   ⚠️ 调用点必须在 bsp_ws2812_init() + bsp_ws2812_enable(true) 之后，否则 led_strip 还是空。
+ *   ⚠️ 上一轮这段**根本没执行**：唤醒来源被误报成 ESP_SLEEP_WAKEUP_GPIO，
+ *      而这里（以及 WAKE1 取证）都挂在 `cause == ESP_SLEEP_WAKEUP_EXT1` 上。
+ *      修掉那个误武装的唤醒源之后，这段才会真正跑到。 */
 static void auto_off_wake_indication(void)
 {
     if (!bsp_ws2812_is_enable() || led_strip == NULL) {
         return;
     }
     light_progress_set_flash_overlay(true);
-    auto_off_breath_once(20, 28, 15, 40); /*!< 约 0.3s 渐亮 + 约 0.4s 渐暗 */
+    auto_off_breath_once(16, 22, 22, 90); /*!< 约 0.35s 渐亮 + 0.09s 保持 + 约 0.48s 渐暗 ≈ 0.9s */
     light_progress_set_flash_overlay(false);
     refresh_key_colors_from_status(); /*!< 把灯交还给常规渲染（充电指示/按键灯效） */
 }
@@ -2544,28 +2560,62 @@ static void power_enter_deep_sleep(void)
     s_ds_enter_epoch = (int64_t)time(NULL);
     s_ds_seq++;
 
-    const uint64_t wake_mask = (1ULL << GPIO_NUM_0) | (1ULL << GPIO_NUM_17);
-    esp_err_t      err       = esp_sleep_enable_ext1_wakeup_io(wake_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+    /*!< ---- 【本轮核心修复①】关掉"GPIO 唤醒源" ----
+     *   app_main 里为 light sleep 调过一次 esp_sleep_enable_gpio_wakeup()，
+     *   而 IDF 的实现（esp_hw_support/sleep_modes.c:2191）**没有任何平台条件编译**：
+     *       s_config.wakeup_triggers |= RTC_GPIO_TRIG_EN;   // 无条件
+     *       return ESP_OK;                                  // S3 上也照样 OK
+     *   启动日志里 `gpio_wakeup=ESP_OK` 就是它在 S3 上"成功"武装的证据。
+     *   而 esp_sleep_get_wakeup_cause()（:2300）里 **RTC_GPIO_TRIG_EN 的判断排在
+     *   EXT1 之前** —— 于是深睡醒来时 cause 报的是 ESP_SLEEP_WAKEUP_GPIO，不是 EXT1。
+     *   一个根因同时解释了两个现场现象：
+     *     · 没按任何按键却自己醒了（S3 的 GPIO 深睡唤醒本就不支持，
+     *       SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP 未定义，这个位属于被误武装）；
+     *     · WAKE1 取证与唤醒灯效**从不执行**（它们挂在 cause==EXT1 上）。
+     *   深睡前必须显式关掉，让 EXT1 成为唯一唤醒源。 */
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+
+    /*!< ---- 【本轮核心修复②】保活 RTC_PERIPH 电源域 ----
+     *   RTC IO 的上下拉属于 RTC_PERIPH 域。IDF 只对 EXT0/GPIO 唤醒自动保活它
+     *   （sleep_modes.c:2624-2630；官方 ext_wakeup.c:26-28 的注释原文：
+     *    "No need to keep that power domain explicitly, **unlike EXT1**"），
+     *   EXT1 不在保活名单里 → 深睡时该域掉电 → 上拉消失、引脚浮空被判低。
+     *   代价：深睡电流增加几十 uA。相对"能可靠睡下去、不被假唤醒打断"完全值得。 */
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+
+    /*!< ---- 按键上拉改走 RTC IO ----
+     *   休眠期数字域断电，只有 RTC 上拉能维持高电平。
+     *   ⚠️ 必须显式 rtc_gpio_set_direction(INPUT_ONLY)：rtc_gpio_init() 只切功能
+     *   （rtc_io.c:54 function_select(RTC)），**不开输入通路**；上一轮的 SLEEP# 取证
+     *   就是漏了这一步，第一次读回来的 rtc(0,0) 是无效值（第二次读对了，因为
+     *   IDF 的 ext1_wakeup_prepare() 已经点过 input_enable 且该位在 RTC 域留存）。 */
+    rtc_gpio_init(GPIO_NUM_0);
+    rtc_gpio_set_direction(GPIO_NUM_0, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pulldown_dis(GPIO_NUM_0);
+    rtc_gpio_pullup_en(GPIO_NUM_0);
+    rtc_gpio_init(GPIO_NUM_17);
+    rtc_gpio_set_direction(GPIO_NUM_17, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pulldown_dis(GPIO_NUM_17);
+    rtc_gpio_pullup_en(GPIO_NUM_17);
+
+    /*!< 等上拉把焊盘电容充上去，再读数 —— 这样 SLEEP# 里的电平才是可信的。 */
+    vTaskDelay(pdMS_TO_TICKS(30));
+
+    const uint64_t  wake_mask = (1ULL << GPIO_NUM_0) | (1ULL << GPIO_NUM_17);
+    const esp_err_t err       = esp_sleep_enable_ext1_wakeup_io(wake_mask, ESP_EXT1_WAKEUP_ANY_LOW);
     if (err != ESP_OK) {
         /*!< 不 abort：即使按键唤醒没配上，拨档经过中间档会断电，等于重新上电，
          *   设备不会变砖。日志留证据即可。 */
         ESP_LOGW(TAG, "ext1 唤醒配置失败 (%s)，将只能靠拨档重新上电唤醒", esp_err_to_name(err));
     }
-    rtc_gpio_init(GPIO_NUM_0);
-    rtc_gpio_pulldown_dis(GPIO_NUM_0);
-    rtc_gpio_pullup_en(GPIO_NUM_0);
-    rtc_gpio_init(GPIO_NUM_17);
-    rtc_gpio_pulldown_dis(GPIO_NUM_17);
-    rtc_gpio_pullup_en(GPIO_NUM_17);
 
     /*!< 把"入睡瞬间"的状态也落 NVS：假唤醒会让设备重启，而蓝牙档没有控制台 ——
      *   这一行是唯一能证明"睡下去时引脚到底是高还是低"的证据。
-     *   rtc(lvl…) 是**配好 RTC 上拉之后**再读一次，用来验证上拉真的把电平拉住了
-     *   （若是 0，说明问题在休眠前的上拉，而不是"睡后漂移"）。 */
-    diag_log_event("SLEEP#%u pre(lvl0=%d lvl17=%d) rtc(lvl0=%u lvl17=%u) mask=0x%llx",
+     *   rtc(lvl…) 是**配好 RTC 上拉、并使能输入通路、且延时之后**读的，值可信。 */
+    diag_log_event("SLEEP#%u pre(lvl0=%d lvl17=%d) rtc(lvl0=%u lvl17=%u) mask=0x%llx err=%d",
                    (unsigned)s_ds_seq, s_ds_pre_lvl0, s_ds_pre_lvl17,
                    (unsigned)rtc_gpio_get_level(GPIO_NUM_0), (unsigned)rtc_gpio_get_level(GPIO_NUM_17),
-                   (unsigned long long)wake_mask);
+                   (unsigned long long)wake_mask, (int)err);
 
     vTaskDelay(pdMS_TO_TICKS(50)); /*!< 让最后两条日志落出去 */
 
@@ -3218,29 +3268,39 @@ void app_main(void)
      *   而且这样以后要在别的档位启用不需要再动这里。 */
     auto_off_config_load();
 
-    /*!< 唤醒原因：区分"冷启动"与"从自动关机深睡被按键唤醒"。
-     *   EXT1 唤醒时把细节落 NVS —— 蓝牙档没有控制台，这是唯一的事后取证通道
-     *   （日志里 SLEEP# 一行是本次入睡前写的，WAKE1 一行是此刻写的，对照着看）。 */
+    /*!< 唤醒原因取证：区分"冷启动"与"从自动关机深睡被唤醒"。
+     *   蓝牙档没有控制台，NVS 是唯一的事后通道；所以这里**无条件**落一行 BOOTRAW ——
+     *   上一轮只留下 reason=8，看不出唤醒源到底是谁（WAKE1 从未落盘），
+     *   这轮把 cause / reset reason / 全部唤醒位 / ext1 掩码 / 睡眠时长一次记全。 */
     bool woke_from_deep_sleep = false;
     {
-        const esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+        const esp_sleep_wakeup_cause_t cause  = esp_sleep_get_wakeup_cause();
+        const esp_reset_reason_t       rst    = esp_reset_reason();
+        const uint32_t                 causes = esp_sleep_get_wakeup_causes();
+        const uint64_t                 st =
+            (cause == ESP_SLEEP_WAKEUP_EXT1) ? esp_sleep_get_ext1_wakeup_status() : 0;
+        /*!< 墙钟由 RTC 计时器提供，跨深睡连续，可直接作差（CONFIG_ESP_TIME_FUNCS_USE_RTC_TIMER=y）。 */
+        const int64_t now_epoch = (int64_t)time(NULL);
+        const int64_t slept_s   = (s_ds_enter_epoch > 0) ? (now_epoch - s_ds_enter_epoch) : -1;
+
+        diag_log_event("BOOTRAW cause=%d rst=%d causes=0x%lx ext1=0x%llx seq=%u slept=%llds", (int)cause,
+                       (int)rst, (unsigned long)causes, (unsigned long long)st, (unsigned)s_ds_seq,
+                       (long long)slept_s);
+
         if (cause == ESP_SLEEP_WAKEUP_EXT1) {
-            woke_from_deep_sleep     = true;
-            const uint64_t st        = esp_sleep_get_ext1_wakeup_status();
-            const int64_t  now_epoch = (int64_t)time(NULL);
-            /*!< 墙钟由 RTC 计时器提供，跨深睡连续，可直接作差（见文件头部说明）。 */
-            const int64_t slept_s = (s_ds_enter_epoch > 0) ? (now_epoch - s_ds_enter_epoch) : -1;
+            woke_from_deep_sleep = true;
             ESP_LOGW(TAG, "从深度睡眠唤醒: EXT1, mask=0x%llx (bit0=Key1/GPIO0, bit17=Key2/GPIO17), 睡了 %llds",
                      (unsigned long long)st, (long long)slept_s);
-            /*!< ⚠️ 这里用 rtc_gpio_get_level()：引脚仍停在入睡前设的 RTC 复用上，
-             *   数字输入是断开的，gpio_get_level() 读不到真实电平。 */
+            /*!< ⚠️ 这里用 rtc_gpio_get_level()：引脚此刻仍停在入睡前设的 RTC 复用上，
+             *   数字输入是断开的，gpio_get_level() 读不到真实电平。
+             *   （后面 KEYMUX 那段会把复用切回数字并复读一次，两边正好互为印证。） */
             diag_log_event("WAKE1 seq=%u ext1=0x%llx slept=%llds pre(lvl0=%d lvl17=%d) now(lvl0=%u lvl17=%u)",
                            (unsigned)s_ds_seq, (unsigned long long)st, (long long)slept_s, s_ds_pre_lvl0,
                            s_ds_pre_lvl17, (unsigned)rtc_gpio_get_level(GPIO_NUM_0),
                            (unsigned)rtc_gpio_get_level(GPIO_NUM_17));
         } else {
-            ESP_LOGI(TAG, "启动/唤醒原因: %d (%s)", (int)cause,
-                     cause == ESP_SLEEP_WAKEUP_UNDEFINED ? "冷启动/复位" : "非深睡唤醒");
+            ESP_LOGI(TAG, "启动/唤醒原因: cause=%d rst=%d causes=0x%lx (rst: 1=上电, 8=深睡唤醒)", (int)cause,
+                     (int)rst, (unsigned long)causes);
         }
     }
 
@@ -3311,6 +3371,38 @@ void app_main(void)
      *   放在这里而不是更早：此刻 WS2812 与渲染任务才就绪，led_strip 才有值。 */
     if (woke_from_deep_sleep) {
         auto_off_wake_indication();
+    }
+
+    /*!< ---- 【本轮核心修复③】把两个键脚从 RTC 复用里放回数字复用 ----
+     *   现象：深睡被唤醒后按键**全部失灵**（无法触发任何映射），而冷启动那一档按键是好的。
+     *   机理（源码已核实）：rtc_gpio_init() 只做 function_select(…, RTCIO_LL_FUNC_RTC)
+     *   （esp_driver_gpio/src/rtc_io.c:54）把焊盘切到 RTC 功能；IDF 自己的
+     *   ext1_wakeup_prepare() 也会做同样的事（sleep_modes.c:2063）。而该选择位位于 RTC 域，
+     *   **深睡时 RTC 域不掉电、唤醒后也不复位** → 复位之后键脚仍挂在 RTC 上，数字 GPIO
+     *   （也就是 keyboard_button 驱动）根本读不到它 → 按键彻底失灵。
+     *   冷启动是上电复位，RTC 域一并复位，所以那一档按键正常 —— 与实测现象完全吻合。
+     *   修复：rtc_gpio_deinit()（rtc_io.c:60，切回 RTCIO_LL_FUNC_DIGITAL）。
+     *   无条件调用（冷启动时等价于空操作）；顺便把"切之前 / 切之后"的数字电平落盘，
+     *   给上面的机理留一份直接证据。 */
+    {
+        gpio_config_t key_cfg = {
+            .pin_bit_mask = (1ULL << GPIO_NUM_0) | (1ULL << GPIO_NUM_17),
+            .mode         = GPIO_MODE_INPUT,
+            .pull_up_en   = GPIO_PULLUP_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type    = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&key_cfg);
+        const int pre0  = gpio_get_level(GPIO_NUM_0);
+        const int pre17 = gpio_get_level(GPIO_NUM_17);
+        rtc_gpio_deinit(GPIO_NUM_0);
+        rtc_gpio_deinit(GPIO_NUM_17);
+        vTaskDelay(pdMS_TO_TICKS(5));
+        const int post0  = gpio_get_level(GPIO_NUM_0);
+        const int post17 = gpio_get_level(GPIO_NUM_17);
+        /*!< pre 为 0 而 post 为 1（键没按着时）就坐实了上面的机理。 */
+        diag_log_event("KEYMUX pre(%d,%d) post(%d,%d) rst=%d", pre0, pre17, post0, post17,
+                       (int)esp_reset_reason());
     }
 
     /*!< Init keyboard key monitor */
