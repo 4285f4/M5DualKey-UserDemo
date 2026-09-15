@@ -81,6 +81,16 @@
                             </div>
                         </div>
                         <div class="auto-off-hint" data-i18n="autoOffHint">仅在蓝牙档生效：无主机连接超过该时长后闪灯提示并休眠（按任一键唤醒）。填 0 表示关闭。</div>
+
+                        <!-- 蓝牙档 light sleep 开关（省电主开关 / 排障 A/B 用） -->
+                        <div class="key-led-effect">
+                            <span class="toggle-label" data-i18n="lightSleepLabel">深度省电</span>
+                            <label class="toggle-switch" for="lightSleepSwitch">
+                                <input type="checkbox" id="lightSleepSwitch" checked title="蓝牙档 light sleep 开关" aria-label="蓝牙档 light sleep 开关">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="auto-off-hint" data-i18n="lightSleepHint">仅蓝牙档生效：开启后空闲时自动进入 light sleep，静置电流约 3mA（续航约 4 天）；关闭约 45mA。改动在下次开机（拨到蓝牙档）后生效。</div>
                         
                         <!-- 拨码开关位置 -->
                         <div class="dip-switch-section">

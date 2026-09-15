@@ -14,11 +14,40 @@
 #include "keyboard_button.h"
 #include "kbd_gpio.h"
 #include "kbd_gptimer.h"
+#include "esp_timer.h"
 
 static const char *TAG = "keyboard_button";
 
 #define OUTPUT_MASK_HIGE 0xFFFFFFFF
 #define OUTPUT_MASK_LOW  0x00000000
+
+/*!< ---- 按键边沿时间戳（诊断，2026-09-15） ----
+ *
+ *   目的：把"按下 → 上报"的延迟拆成两段，判断慢在唤醒路径还是软件路径。
+ *   kbd_power_save_isr_handler 是省电通路上的 GPIO 电平中断，它跑起来的时刻
+ *   约等于"芯片被这一下按键唤醒之后开始处理"的时刻；把它记下来，上层
+ *   （main.cpp 的 keyboard_cb）再取一次时间相减，就得到"ISR → 回调"的耗时。
+ *
+ *   ⚠️ 它**测不出"物理边沿 → ISR"**那一段：芯片若正在 light sleep，是先被边沿
+ *   唤醒、ISR 才跑，而物理时刻**没有任何片上时钟能记录**（RTC GPIO 唤醒源不上报
+ *   时间戳，RTC 计时器也只有 1/32768s ≈ 30us 分辨率且不锁存边沿）。
+ *   所以：本值很小但仍觉得慢 ⇒ 瓶颈在**唤醒路径**而非驱动/上报软件路径 ——
+ *   这正是 main.cpp 那个"蓝牙档 light sleep 开关"要 A/B 的东西。
+ *   ⚠️ esp_timer_get_time() 在 IDF 里是 esp_timer_impl_get_time 的别名，带
+ *   ESP_TIMER_IRAM_ATTR，可在本 IRAM ISR 里安全调用。
+ *   ⚠️ 只在"边沿把中断唤醒"时更新（省电态下每个按下沿一次），不逐帧刷新。 */
+static volatile int64_t  s_edge_isr_us  = 0;
+static volatile uint32_t s_edge_isr_cnt = 0;
+
+int64_t keyboard_button_get_edge_us(void)
+{
+    return s_edge_isr_us;
+}
+
+uint32_t keyboard_button_get_edge_count(void)
+{
+    return s_edge_isr_cnt;
+}
 
 #define KBD_TIMER_NOTIFY (1<<0)
 #define KBD_EXIT         (1<<1)
@@ -234,6 +263,11 @@ static void kbd_task(void *args)
 static void IRAM_ATTR kbd_power_save_isr_handler(void* arg)
 {
     keyboard_btn_t *kbd = (keyboard_btn_t *)arg;
+    /*!< 先记时刻再干活：这一行尽量贴近"芯片被唤醒后开始处理"的瞬间。
+     *   计数与时刻分两次写，读侧（main.cpp）以计数值变化为准再取时刻，
+     *   单写者单读者，无需临界区。 */
+    s_edge_isr_us = esp_timer_get_time();
+    s_edge_isr_cnt++;
     if (!kbd->gptimer_start) {
         kbd_gptimer_start(kbd->gptimer_handle);
         kbd->gptimer_start = true;

@@ -125,6 +125,23 @@ esp_err_t keyboard_button_create(keyboard_btn_config_t *kbd_cfg, keyboard_btn_ha
 esp_err_t keyboard_button_delete(keyboard_btn_handle_t kbd_handle);
 
 /**
+ * @brief 取"最近一次省电通路 GPIO 中断"的时刻（us，esp_timer 时基）。
+ *
+ * @note 诊断用。省电态下按键按下沿会触发 kbd_power_save_isr_handler，这里记下
+ *       它跑起来的时刻；上层减去自己取到的时刻即得"ISR → 回调"耗时。
+ *       **测不出"物理边沿 → ISR"那段**（片上没有能记录它的时钟）。
+ * @return esp_timer_get_time() 时基的时刻，未发生过中断时为 0。
+ */
+int64_t keyboard_button_get_edge_us(void);
+
+/**
+ * @brief 取"最近一次省电通路 GPIO 中断"的序号（与 keyboard_button_get_edge_us()
+ *        成对使用：序号变了才说明时刻是新的一次）。
+ * @return 单调递增的中断次数。
+ */
+uint32_t keyboard_button_get_edge_count(void);
+
+/**
  * @brief Register the button callback function
  *
  * @param kbd_handle keyboard handle
