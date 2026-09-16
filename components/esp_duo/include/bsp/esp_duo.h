@@ -24,6 +24,10 @@ esp_err_t bsp_ws2812_clear(void);
 
 bool bsp_ws2812_is_enable(void);
 
+/*!< light sleep 唤醒后重新声明 WS2812 供电通路（GPIO40 = PWR_EN）。
+ *   返回读回的引脚电平，仅用于取证；正常时应为 0（低电平使能）。 */
+int bsp_ws2812_resync(void);
+
 esp_err_t bsp_lamp_array_init(uint32_t bind);
 
 esp_err_t bsp_rgb_matrix_init(void);

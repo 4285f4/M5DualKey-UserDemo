@@ -19,6 +19,7 @@ extern "C" {
 #include "btn_progress.h"
 #include "rgb_matrix.h"
 #include "esp_timer.h"
+#include "esp_rom_sys.h"
 #include "tinyusb_hid.h"
 #include "ble_hid.h"
 #include "dual_button.h"
@@ -2389,6 +2390,10 @@ static bool key_led_effect_enabled(void)
  *   （与 set_key_rgb_color_locked / power_indicator_task 的既有约定一致）。 */
 #define KEY_FLASH_LED_OF_INPUT(input_index) ((input_index) == 0 ? 1 : 0)
 
+/*!< WS2812 上电后需要一段稳定时间才能可靠接收数据（datasheet 的 power-on reset）。
+ *   唤醒后重新声明供电时留 1ms —— 宁可多等这一下，也不让数据比供电先到。 */
+#define KEY_FLASH_POWER_SETTLE_US 1000
+
 static void key_flash_trigger(int input_index)
 {
     if (!key_led_effect_enabled()) {
@@ -2416,6 +2421,24 @@ static void key_flash_trigger(int input_index)
      *   ⚠️ 锁只包住写像素，绝不跨 vTaskDelay（本项目铁律）。 */
     bool lit = false;
     if (led_strip != NULL) {
+        /*!< ── 【2026-09-16 修复 2】点亮前重新声明 LED 供电通路 ────────────────
+         *   GPIO40 是 WS2812 的供电使能（产品文档管脚映射 G40 = WS2812_PWR/PWR_EN）。
+         *   本工程 sdkconfig 里 CONFIG_PM_SLP_DISABLE_GPIO=y，其官方 help 说明：
+         *   "chips will disable all GPIO pins at automantic sleep"，实现是
+         *   sleep_gpio.c:57 esp_sleep_config_gpio_isolate() —— 每次 light sleep
+         *   前把**所有** GPIO 置成 GPIO_MODE_DISABLE + FLOATING，并由
+         *   esp_sleep_enable_gpio_switch() 给每个 pad 置 SleepSelEn=1。
+         *
+         *   所以 LED 会随每次 light sleep 断电。唤醒后**数据发得出去、灯照样不亮**：
+         *   led_strip_refresh() 只管 SPI 传输，不知道灯有没有电，失败与否它都报 OK
+         *   —— 这正是"代码看着全对、灯就是灭的"的成因，也是它最容易和
+         *   "灯效根本没触发"混淆的地方。
+         *
+         *   修法：点亮前重放一次"上电 + hold"，并按 WS2812 上电复位留出稳定期。
+         *   代价是每次按键多 1ms 忙等，可忽略。 */
+        const int pwr_lvl = bsp_ws2812_resync();
+        esp_rom_delay_us(KEY_FLASH_POWER_SETTLE_US);
+
         light_progress_lock();
         led_strip_set_pixel(led_strip, led, 0, 0, KEY_FLASH_PEAK_LEVEL);
         const esp_err_t rf = led_strip_refresh(led_strip);
@@ -2425,6 +2448,18 @@ static void key_flash_trigger(int input_index)
         } else {
             g_led_rf_fail++;
         }
+
+        /*!< 取证：只在"静置后的第一次按键"记录 —— 那正是复现场景（light sleep
+         *   真正生效后唤醒），也天然避开高频写。走 diag_log_event()：控制台恒打，
+         *   NVS 落盘（扛断电）。⇒ 拔线按键后**不必插 USB 取日志**，事后进下载模式
+         *   直接读 flash 即可。 */
+        static int64_t s_led_last_flash_us = 0;
+        const int64_t  now_flash_us       = esp_timer_get_time();
+        if (now_flash_us - s_led_last_flash_us > 5LL * 1000 * 1000) {
+            diag_log_event("LEDPW pwr=%d rf=%d en=%d strip=%d", pwr_lvl, (int)rf,
+                           (int)bsp_ws2812_is_enable(), (int)(led_strip != NULL));
+        }
+        s_led_last_flash_us = now_flash_us;
     }
     if (lit && !s_key_flash_overlay) {
         /*!< 先把渲染接管权拿到手，再唤醒渲染任务 —— 顺序反过来的话，渲染任务
