@@ -383,6 +383,7 @@ static esp_err_t websocket_handler(httpd_req_t *req);
 static void websocket_send_status(void);
 static void websocket_task(void *pvParameters);
 static void device_status_task(void *pvParameters);
+static void late_flush_task(void *pvParameters);
 static void power_indicator_task(void *pvParameters);
 static void update_device_status(void);
 
@@ -2150,6 +2151,44 @@ static void websocket_task(void *pvParameters)
 /*!< 蓝牙档(仅蓝牙)下的设备状态刷新任务
  *   蓝牙档不启动 HTTP/WebSocket 服务, 但 g_device_status.bluetooth_connected 依赖
  *   update_device_status() 更新, app_main 主循环据此上报 BLE 电量, 因此不可省略 */
+/*!< ── 定时刷盘任务（2026-09-16 加，仅蓝牙档）─────────────────────────────
+ *
+ *   要解决的问题："我在设备上按了键，但日志没进 flash，事后什么都看不到。"
+ *
+ *   为什么会出现：`diag_log_event()` 是**事件驱动**的落盘 —— 没有事件产生，
+ *   flash 一个字节都不会写。而用户真实用法是"静置 → 按几下 → 再静置"，
+ *   中间那段静置期完全没有任何 NVS 写入动作，于是"设备到底有没有在正常工作"
+ *   这个最基本的问题都无从回答。
+ *
+ *   为什么不能用"插线看控制台"替代：BLE 档运行中热插 USB 会永久打断控制台
+ *   （REFERENCE §M，已判定为可接受的已知缺陷），用户已明确拒绝这条路。
+ *
+ *   本任务把落盘从"纯事件驱动"改成"定时驱动 + 事件驱动"：
+ *   只要设备醒着，每 LATE_FLUSH_PERIOD_S 秒主动把 RAM 侧取证固化一次。
+ *   事后**拔线状态下**用 esptool 读 NVS 分区即可导出，不需要任何插线动作。
+ *
+ *   🔴 周期为什么是 60s：flash 擦写会 `portDISABLE_INTERRUPTS` 并 stall 另一个核，
+ *   连续 ≥600ms 就触发 INT WDT 硬复位（§1.1 的既有定案）。60s 的间隔让这条路
+ *   对中断延迟的贡献可以忽略（占比 ~1%），且远大于 `LOG_PERSIST_MIN_GAP_MS`。
+ *
+ *   ⚠️ 只在 BLE 档创建本任务 —— WiFi 档有 HTTP，可以按需从网页侧触发，
+ *      没必要让电池持续承担这次擦写。 */
+#define LATE_FLUSH_PERIOD_S 60
+
+static void late_flush_task(void *pvParameters)
+{
+    (void)pvParameters;
+    vTaskDelay(pdMS_TO_TICKS(15000)); /*!< 开机后先让启动期取证落完（前 10s 不节流） */
+    while (1) {
+        /*!< 用 LATE 前缀：不是噪声类标签，因此会走 WARN 路径立刻落盘。
+         *   行内带上 uptime 与分档计数 —— 这一行本身就是"设备还活着、还醒着"的
+         *   证据，即使期间一个按键都没按过。 */
+        diag_log_event("LATE up=%llds flash=%u cb=%u edge_max=%ums", (long long)(esp_timer_get_time() / 1000000),
+                       (unsigned)g_key_flash_count, (unsigned)g_key_cb_count, (unsigned)g_key_edge_ms_max);
+        vTaskDelay(pdMS_TO_TICKS(LATE_FLUSH_PERIOD_S * 1000));
+    }
+}
+
 static void device_status_task(void *pvParameters)
 {
     int tick = 0;
@@ -3908,6 +3947,16 @@ void app_main(void)
         /*!< 只在 BLE 档启动功耗采样任务。WiFi 档故意不启动：它每 5min 会把快照
          *   写进 NVS，若在 WiFi 档也跑，切回 BLE 档时就会把刚测到的数据覆盖掉。 */
         diag_power_start();
+        /*!< 【2026-09-16 本轮核心修复】定期把诊断事件刷进 NVS。
+         *
+         *   动机：用户明确拒绝"为了看日志去插线"（BLE 档运行中热插 USB 会永久
+         *   打断控制台 —— 已知缺陷 §M）。而 `diag_log_event()` 是**事件驱动**的：
+         *   没人产生事件时 flash 上一次都不会写。于是"我按了几下键，但日志没进
+         *   flash"成了一个盲区。
+         *   这个任务把"落盘"从事件驱动改成**定时驱动 + 事件驱动**双保险：
+         *   只要设备醒着，最多 LATE_FLUSH_PERIOD_S 秒，RAM 侧的取证就一定会被
+         *   固化。事后**拔线状态下**靠 esptool 读 NVS 即可导出（无需插线运行）。 */
+        xTaskCreate(late_flush_task, "late_flush_task", 4096, NULL, 3, NULL);
     } else {
         ESP_LOGI(TAG, "DIP switch is in OFF position: USB-HID only (WiFi/HTTP/BLE disabled)");
     }

@@ -187,16 +187,37 @@ void diag_power_clear(void)
  * =========================================================================== */
 
 #define LOG_KEY        "log"
-/*!< 单条字符串的上限。NVS 单个 string value 上限是 4000 字节，留足余量。
- *   2026-09-15 由 1500 提到 2000：本轮新增了运行期取证（BLECONN/KEYPIN/KEYCB），
- *   1500 字符的窗口只够 ~28 行，一次"睡→醒→连接跳变"就可能把关键行挤出去。
- *   nvs 分区有 0x6000(24KB)，2000 字符的写峰值约 8KB，仍在安全范围。 */
-#define LOG_MAX_CHARS  2000
+/*!< 单条字符串的上限。NVS 单个 string value 上限是 4000 字节。
+ *   2026-09-15 由 1500 提到 2000；**2026-09-16 提到 3600**。
+ *   上一次提到 2000 仍然不够：用户跑一轮"用一段时间 + 事后导出"，需要装下
+ *   BOOT# / WAKE / KEYMUX / LEDPW / LATE 等一整套取证，2000 字符只够 ~28 行，
+ *   一次"睡→醒→按键"就能把开机那几行挤掉。
+ *   ⚠️ 容量安全性：NVS string value 上限 4000，3600 留有余量；写峰值≈2×3600+开销
+ *   ≈7.4KB，而 nvs 分区是 0x6000=24KB ⇒ 静态上安全。
+ *   🔴 但**擦写耗时**才是真正的约束（见 LOG_PERSIST_MIN_GAP_MS 注释）：blob 越大，
+ *   一次 set_str 的擦写时间越长。所以容量翻倍的同时必须把"每条都写"改成
+ *   **按严重度选择性落盘**（见 diag_log_event 里的 s_log_defer 机制）。 */
+#define LOG_MAX_CHARS  3600
 /*!< 单次开机内最多追加多少行。重启风暴时每轮会追加 3~4 行，设上限是为了
- *   不让 flash 在一个诊断周期里被反复擦写（NVS 每次 set_str 都要写一整条）。 */
-#define LOG_MAX_APPENDS 60
+ *   不让 flash 在一个诊断周期里被反复擦写（NVS 每次 set_str 都要写一整条）。
+ *   2026-09-16 由 60 提到 100 —— 配合下面的严重度机制，真正的噪声不再占配额。 */
+#define LOG_MAX_APPENDS 100
 
-static int s_log_appends = 0; /*!< 本次开机已追加行数（每次开机清零） */
+/*!< --- 行严重度（2026-09-16 加）---
+ *   动机：`PERIODIC_DUMP_S=20` 的无条件周期快照（BATLAT/LEDCNT）是**纯噪声源**，
+ *   每 20s 落一行 NVS，45 秒就能把 60 行配额吃光，于是用户事后看到的永远是
+ *   一串 BATLAT，真正值钱的 BOOT# / 按键取证一行没有。
+ *
+ *   分级落盘策略：
+ *     ERROR/WARN → 立刻落盘，**并顺带把被延迟的 INFO 行一起冲刷下去**
+ *     INFO       → 只打控制台；仅当"距上次落盘已过 LOG_INFO_MAX_DEFER_MS"才落盘
+ *     DEBUG      → 永不落盘（只打控制台）
+ *   这样低频的关键行（BOOT#、KEYMUX、LEDPW、LATE…）在任何情况下都能进 flash，
+ *   而高频噪声最多每 30s 占一行。 */
+#define LOG_INFO_MAX_DEFER_MS 30000
+
+static int  s_log_appends = 0;            /*!< 本次开机已追加行数（每次开机清零） */
+static bool s_log_defer   = false;        /*!< 是否有 INFO 行被延迟（待冲刷） */
 
 /*!< 🔴 2026-09-15 定案：NVS 持久化的最小间隔（ms），且**启动期不受限**。
  *   本项目运行期唯一的 flash 写入者就是这里。flash 擦写期间 IDF 会
@@ -213,25 +234,63 @@ static int64_t s_log_last_persist_us = 0;
 
 void diag_log_event(const char *fmt, ...)
 {
-    char line[220];
+    char    line[220];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
 
     /*!< 控制台永远打印：蓝牙档插上 USB 走 USB-Serial-JTAG 可实时读到
-     *   （.workbuddy/console_capture.py），不再依赖"切到 WiFi 档读 /diag"。 */
+     *   （.workbuddy/console_capture.py）。 */
     ESP_LOGI("DIAGLOG", "%s", line);
+
+    /*!< --- 严重度分级（2026-09-16）---
+     *   `diag_log_event` 没有 level 参数，而绝大多数调用点都用 `"XXX ..."` 这种
+     *   全大写标签开头。这里直接按前缀分流，**不改任何调用点**。
+     *   · 噪声类（周期快照 / 计数统计 / 网页显示派生）→ INFO：延迟落盘
+     *   · 其余（BOOT#/WAKE/KEYMUX/LEDPW/…）→ WARN：立刻落盘
+     *   判据用"标签前 8 字符"，因为 fmt 一定以字面量标签开头。 */
+    static const char *const info_tags[] = {
+        "BATLAT ",  /* 周期延迟快照（PERIODIC_DUMP_S 一条） */
+        "LEDCNT ",  /* 周期灯效四层计数 */
+        "VIEW ",    /* update_device_status ~2Hz 派生的档位显示 */
+    };
+    bool is_info = false;
+    for (size_t i = 0; i < sizeof(info_tags) / sizeof(info_tags[0]); i++) {
+        const size_t n = strlen(info_tags[i]);
+        if (strncmp(line, info_tags[i], n) == 0) {
+            is_info = true;
+            break;
+        }
+    }
 
     const int64_t now_us = esp_timer_get_time();
     if (s_log_appends >= LOG_MAX_APPENDS) {
         return;
     }
-    if (now_us > LOG_BOOT_PHASE_US && now_us - s_log_last_persist_us < (int64_t)LOG_PERSIST_MIN_GAP_MS * 1000) {
-        return; /*!< 运行期节流：只打控制台，不落盘 */
+
+    if (now_us > LOG_BOOT_PHASE_US) {
+        /*!< 运行期节流：两次落盘之间至少 LOG_PERSIST_MIN_GAP_MS。
+         *   这个间隔是**硬约束**，不是省电优化 —— flash 擦写期间 IDF 会
+         *   `portDISABLE_INTERRUPTS` 并 stall 另一个核，level-4 的 INT WDT 排不上队，
+         *   连续 ≥600ms 就触发纯硬件复位（见 §1.1 的 INT WDT 定案）。
+         *   节流期内：WARN 行标记为"待冲刷"，等下一次真正落盘时一并写下去，
+         *   保证不会因为恰好撞上节流窗口而丢掉关键证据。 */
+        if (now_us - s_log_last_persist_us < (int64_t)LOG_PERSIST_MIN_GAP_MS * 1000) {
+            if (!is_info) {
+                s_log_defer = true;
+            }
+            return;
+        }
+        /*!< INFO 行在运行期的额外延迟：只有距上次落盘超过 LOG_INFO_MAX_DEFER_MS
+         *   才允许写，否则纯噪声（周期快照）会把配额与 flash 都吃掉。 */
+        if (is_info && (now_us - s_log_last_persist_us) < (int64_t)LOG_INFO_MAX_DEFER_MS * 1000) {
+            return;
+        }
     }
     s_log_last_persist_us = now_us;
     s_log_appends++;
+    s_log_defer = false;
 
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
@@ -315,6 +374,70 @@ char *diag_log_load(void)
     }
     nvs_close(h);
     return buf;
+}
+
+/*!< --- 「把 NVS 里的诊断日志读出来」的动作本身要留痕（2026-09-16 加）---
+ *   背景：用户按了"把日志刷进 flash"之后，我这边最想确认的是
+ *   **这次操作到底有没有真的执行、执行时设备是什么状态**。
+ *   但直接调用 diag_log_event 会递归（它自己就是被这个动作触发的）。
+ *   所以这里用一个独立的 NVS key 记录"上次刷盘请求"，读回时一并显示。
+ *   记的是墙钟 + uptime：两者相差很远说明中途重启过。 */
+#define LOG_SYNC_KEY "sync"
+
+void diag_log_note_sync_request(int source, int ready_wait_ms)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    char rec[160];
+    snprintf(rec, sizeof(rec), "src=%d wait=%dms up=%llds", source, ready_wait_ms,
+             (long long)(esp_timer_get_time() / 1000000));
+    nvs_set_str(h, LOG_SYNC_KEY, rec);
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGI("DIAGLOG", "SYNCREQ %s", rec);
+}
+
+char *diag_log_load_sync(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return NULL;
+    }
+    size_t len = 0;
+    char  *buf = NULL;
+    if (nvs_get_str(h, LOG_SYNC_KEY, NULL, &len) == ESP_OK && len > 0) {
+        buf = malloc(len);
+        if (buf != NULL && nvs_get_str(h, LOG_SYNC_KEY, buf, &len) != ESP_OK) {
+            free(buf);
+            buf = NULL;
+        }
+    }
+    nvs_close(h);
+    return buf;
+}
+
+/*!< 读一次 NVS 日志"重写一遍"（内容不变），只为把 blob 重新提交到 flash。
+ *   用途：WiFi 档（USB 无控制台输出）时从网页侧强行刷盘。 */
+bool diag_log_flush(void)
+{
+    char *cur = diag_log_load();
+    if (cur == NULL) {
+        return false;
+    }
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        free(cur);
+        return false;
+    }
+    const esp_err_t r = nvs_set_str(h, LOG_KEY, cur);
+    if (r == ESP_OK) {
+        nvs_commit(h);
+    }
+    nvs_close(h);
+    free(cur);
+    return (r == ESP_OK);
 }
 
 void diag_log_clear(void)

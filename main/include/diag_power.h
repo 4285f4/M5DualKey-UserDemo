@@ -108,6 +108,28 @@ char *diag_log_load(void);
 void diag_log_clear(void);
 
 /**
+ * @brief 把当前 NVS 事件日志重新提交一次（内容不变），返回是否成功。
+ *
+ * 动机（2026-09-16）：BLE 档运行期，`diag_log_event` 的 WARN 行受
+ * LOG_PERSIST_MIN_GAP_MS 节流；而 **拔线时 USB 控制台没有任何主机在收**，
+ * `usb_serial_jtag_write()` 首行 `if (!is_connected()) return -1;` 会把整行丢掉。
+ * 于是"用户按了键、日志打了、但既没进 flash 也没被主机收走"是可能的。
+ * 本函数提供一个显式的"立刻刷盘"动作，让用户/网页能主动把 RAM 侧已经
+ * 格式化但尚未落盘的内容固化下来，**不再依赖"事后插线看控制台"**。
+ */
+bool diag_log_flush(void);
+
+/**
+ * @brief 记录一次"刷盘请求"（独立 NVS key，不写进事件日志本体以免递归）。
+ * @param source        触发来源：0=网页按钮，1=其他
+ * @param ready_wait_ms 等待 WS 发送队列排空的毫秒数（用于判断请求是否可靠送达）
+ */
+void diag_log_note_sync_request(int source, int ready_wait_ms);
+
+/** 读回"上一次刷盘请求"的记录（堆字符串，调用方 free()；无记录返回 NULL）。 */
+char *diag_log_load_sync(void);
+
+/**
  * @brief 记录一次"网页显示用档位"的派生结果，用于排查显示与实际档位不一致。
  *
  * 背景（2026-09-15 实测）：设备实物在 WiFi 档，网页收到的 dip_switch_pos 却是 0
