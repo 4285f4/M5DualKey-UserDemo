@@ -22,8 +22,6 @@ class LanguageManager {
                 autoOffLabel: '自动关机',
                 autoOffUnit: '分钟',
                 autoOffHint: '仅在蓝牙档生效：无主机连接超过该时长后闪灯提示并休眠（按任一键唤醒）。填 0 表示关闭。',
-                lightSleepLabel: '深度省电',
-                lightSleepHint: '仅蓝牙档生效：开启后空闲时自动进入 light sleep，静置电流约 3mA（续航约 4 天）；关闭约 45mA。改动在下次开机（拨到蓝牙档）后生效。',
                 dipSwitchPosition: '拨码开关位置',
                 left: '左',
                 center: '中',
@@ -301,8 +299,6 @@ class LanguageManager {
                 autoOffLabel: 'Auto power off',
                 autoOffUnit: 'min',
                 autoOffHint: 'BLE position only: after this long with no host connected, the LEDs blink and the device sleeps (press any key to wake). Set 0 to disable.',
-                lightSleepLabel: 'Deep power save',
-                lightSleepHint: 'BLE position only: when on, the chip enters light sleep while idle (~3mA idle, ~4 days battery); when off, ~45mA. Takes effect on the next boot (switching to the BLE position).',
                 dipSwitchPosition: 'DIP Switch Position',
                 left: 'Left',
                 center: 'Center',
@@ -2646,8 +2642,6 @@ class DualKeyController {
             keyLedEffectEnabled: true,
             // 自动关机超时（分钟，0 = 关闭）；仅蓝牙档生效
             autoOffMin: 15,
-            // 蓝牙档 light sleep 开关（payload 为 light_sleep_enabled，1=开）
-            lightSleepEnabled: true,
             // 自定义映射状态
             customMappingEnabled: false,
             customLeftAction:  { action_type: 0, modifier: 0, keycode: 0x4B, text: '' },
@@ -2805,12 +2799,6 @@ class DualKeyController {
                     if (!this.autoOffPendingUntil || Date.now() >= this.autoOffPendingUntil) {
                         this.dualkeyState.autoOffMin = data.dualkey.auto_off_min;
                     }
-                }
-
-                // 蓝牙档 light sleep 开关（配置值，1/0）。改完之后要重新开机才生效，
-                // 所以 UI 上直接反映配置，不做"乐观置位"（灰度不会有来回跳的问题）。
-                if (data.dualkey.light_sleep_enabled !== undefined) {
-                    this.dualkeyState.lightSleepEnabled = !!data.dualkey.light_sleep_enabled;
                 }
 
                 // 更新自定义映射状态
@@ -2974,21 +2962,6 @@ class DualKeyController {
             });
         } else {
             console.error('未找到自动关机输入框元素');
-        }
-
-        // 蓝牙档 light sleep 开关（省电主开关，也是排障 A/B 的开关）
-        const lightSleepSwitch = document.getElementById('lightSleepSwitch');
-        if (lightSleepSwitch) {
-            lightSleepSwitch.addEventListener('change', () => {
-                const enabled = !!lightSleepSwitch.checked;
-                this.dualkeyState.lightSleepEnabled = enabled;
-                this.sendMessage({
-                    type: 'set_light_sleep',
-                    enabled: enabled
-                });
-            });
-        } else {
-            console.error('未找到深度省电开关元素');
         }
 
         // Bus 枚举设备按钮
@@ -3900,17 +3873,6 @@ class DualKeyController {
 
         // 同步自动关机分钟数
         this.updateAutoOffInput();
-
-        // 同步深度省电（蓝牙档 light sleep）开关
-        this.updateLightSleepSwitch();
-    }
-
-    updateLightSleepSwitch() {
-        // 直接改 checked 不会触发 change 事件，所以状态回传不会形成回环
-        const el = document.getElementById('lightSleepSwitch');
-        if (el) {
-            el.checked = !!this.dualkeyState.lightSleepEnabled;
-        }
     }
 
     updateAutoOffInput() {

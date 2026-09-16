@@ -606,12 +606,6 @@ CONFIG_TUSB_PID=0x8000
 CONFIG_TUSB_MANUFACTURER="Espressif"
 CONFIG_TUSB_PRODUCT="HID Demo"
 # end of USB Configuration
-
-#
-# Wireless Configuration
-#
-CONFIG_LIGHT_SLEEP_TIMEOUT_MS=60000
-# end of Wireless Configuration
 # end of ESP KeyBoard Example
 
 #

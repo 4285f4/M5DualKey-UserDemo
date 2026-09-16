@@ -140,30 +140,23 @@ static uint16_t g_auto_off_min = AUTO_OFF_DEFAULT_MIN;
 /*!< 当前"无连接"已持续秒数（file scope 便于 /diag 观测；判定逻辑见 auto_off_tick）。 */
 static uint32_t s_auto_off_idle_s = 0;
 
-/*!< ---- 蓝牙档 light sleep 开关（A/B 用，2026-09-15 夜） ----
+/*!< ---- 蓝牙档 light sleep：**恒开，不再提供开关**（2026-09-16 移除） ----
  *
- *   为什么要做成开关：蓝牙档独有的运行时差异只有三样 —— ① light sleep、
- *   ② 无连接自动深睡、③ 不跑 WiFi/HTTP/chain_bus（更闲）。
- *   用户 2026-09-15 报的四条劣化（静置后按键/灯效延迟高、连按多下反复重启、
- *   深睡唤醒后按键约 1s 才反应、长按双触发+双击丢失+灯效消失）**只在蓝牙档出现**，
- *   WiFi 档实测一切正常。② 可排除（这些症状都发生在连接态，auto_off_tick 见
- *   g_connect_status==2 会把 idle 清零）；③ 只是"更容易进休眠"的放大器
- *   ⇒ 主嫌疑就是 ①。
+ *   这里原本有个网页可配的开关（NVS `power_cfg/light_sleep`），是 2026-09-15 夜
+ *   为排障临时加的 A/B 旋钮 —— 当时要回答"蓝牙档那批延迟/重启的元凶是不是
+ *   light sleep"。答案当晚就定案了：**是**。修法见 keyboard_cb 上方的
+ *   kbd_keepawake_refresh()（只在真正按键的那几百 ms 拿 ESP_PM_NO_LIGHT_SLEEP
+ *   并在末次按键后留 1.5s 尾巴），用户实机确认"无延迟、立即响应"。
  *
- *   静态分析到此为止 —— 本项目铁律是"不猜机理、拿数据"。做成可配开关后，
- *   一次烧录即可由用户自己一键 A/B：
- *     · 关掉 light sleep 后劣化消失 ⇒ 元凶是 light sleep（省电 vs 体验，二选一）；
- *     · 关掉后照旧 ⇒ 与休眠无关，转去查键脚/驱动/NVS 写路径那一侧。
+ *   使命完成后再留着它只有坏处：
+ *     · 关掉的唯一效果是把静置电流从 ~3.3mA 拖回 ~45mA（续航 4 天 → 8 小时），
+ *       换不到任何延迟改善（按键那几百 ms 已被 keep-awake 锁兜住）；
+ *     · 而"关"这个状态本来就插一根 USB 线就能自动达到 —— IDF 的 USB-Serial-JTAG
+ *       connection monitor 一旦检测到连接就持 NO_LIGHT_SLEEP 锁 ⇒ 开关是冗余的。
  *
- *   ⚠️ 只在 app_main 开机时读取并生效，改完必须重新上电；实际使用中"拨到蓝牙档"
- *   本来就要经过中间 OFF 档断电，所以天然满足。
- *   ⚠️ 写 NVS 只发生在网页下发配置时（用户触发、极低频），不走任何周期性路径。
- *   ⚠️ 关掉后 g_light_sleep_on 保持 false —— update_device_status() 那份"休眠下
- *   ADC 会塌陷、不采信原始拨码值"的判断随之失效（此时读数本来就可信），语义正确。 */
-#define LIGHT_SLEEP_NVS_KEY  "light_sleep"
-#define LIGHT_SLEEP_DEFAULT  1
-
-static uint8_t g_light_sleep_cfg = LIGHT_SLEEP_DEFAULT; /*!< 1 = 蓝牙档启用 light sleep */
+ *   ⚠️ g_light_sleep_on **必须保留**：那是运行期状态（esp_pm_configure 是否成功），
+ *   不是这里被删掉的配置项 —— update_device_status() 与 dip_switch_verify_crossing()
+ *   都依赖它。 */
 
 /*!< 按键"ISR → 上报"延迟取证。
  *   时刻由 components/keyboard_button 的省电 ISR 记录，这里在 keyboard_cb 里做差。
@@ -388,8 +381,6 @@ static void update_device_status(void);
 static void auto_off_config_load(void);
 static void auto_off_config_save(uint16_t minutes);
 static void auto_off_tick(void);
-static void light_sleep_config_load(void);
-static void light_sleep_config_save(uint8_t enabled);
 static void power_enter_deep_sleep(void) __attribute__((noreturn));
 
 // RGB颜色控制函数声明
@@ -656,15 +647,13 @@ static esp_err_t diag_get_handler(httpd_req_t *req)
                  "edge->report: last %u ms   max %u ms   count %u   (省电ISR -> keyboard_cb)\n"
                  "hid send usb: last %u ms   max %u ms   count %u\n"
                  "hid send ble: last %u ms   max %u ms   count %u\n"
-                 "auto off    : %u min (0=off)   idle %u s   (BLE 档无连接判定)\n"
-                 "light sleep : %u   (1=开; 仅蓝牙档; 0=网页里关掉了)\n",
+                 "auto off    : %u min (0=off)   idle %u s   (BLE 档无连接判定)\n",
                  (unsigned)lat.tap_hold_ms_last, (unsigned)lat.tap_hold_ms_max, (unsigned)lat.tap_count,
                  (unsigned)lat.long_fire_ms_last, (unsigned)lat.long_count, (unsigned)lat.cb_gap_ms_max,
                  (unsigned)lat.cb_down_count, (unsigned)g_key_edge_ms_last, (unsigned)g_key_edge_ms_max,
                  (unsigned)g_key_edge_cnt, (unsigned)lat.usb_send_ms_last, (unsigned)lat.usb_send_ms_max,
                  (unsigned)lat.usb_send_cnt, (unsigned)lat.ble_send_ms_last, (unsigned)lat.ble_send_ms_max,
-                 (unsigned)lat.ble_send_cnt, (unsigned)g_auto_off_min, (unsigned)s_auto_off_idle_s,
-                 (unsigned)g_light_sleep_cfg);
+                 (unsigned)lat.ble_send_cnt, (unsigned)g_auto_off_min, (unsigned)s_auto_off_idle_s);
     }
 
     /*!< 运行期即时取证（纯 RAM）：BLE 连接/断开/认证/连接参数 + 灯效路径。
@@ -821,18 +810,6 @@ static esp_err_t websocket_handler(httpd_req_t *req)
                         auto_off_config_save((uint16_t)minutes);
                         /*!< 立刻回推一次状态，让网页那个数字框尽快拿到落定值，
                          *   不必等下一个 500ms 周期（减少"改了又跳回去"的观感）。 */
-                        if (status_refresh_queue != NULL) {
-                            status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
-                            xQueueSend(status_refresh_queue, &refresh_msg, 0);
-                        }
-                    }
-                } else if (strcmp(type->valuestring, "set_light_sleep") == 0) {
-                    /*!< 蓝牙档是否启用 light sleep（0/1）。**下次开机生效**：
-                     *   esp_pm_configure() 在 app_main 里调用，运行时改不了这一档的
-                     *   唤醒/休眠行为（改完拨到蓝牙档本来就会断电重来一遍，够用）。 */
-                    cJSON *en_item = cJSON_GetObjectItem(json, "enabled");
-                    if (en_item != NULL && cJSON_IsBool(en_item)) {
-                        light_sleep_config_save(cJSON_IsTrue(en_item) ? 1 : 0);
                         if (status_refresh_queue != NULL) {
                             status_refresh_type_t refresh_msg = STATUS_REFRESH_IMMEDIATE;
                             xQueueSend(status_refresh_queue, &refresh_msg, 0);
@@ -1617,9 +1594,6 @@ static void websocket_send_status(void)
     cJSON_AddBoolToObject(dualkey, "key_led_effect_enabled", rgb_matrix_is_enabled());
     // 自动关机超时（分钟，0 = 关闭）；只在蓝牙档真正生效
     cJSON_AddNumberToObject(dualkey, "auto_off_min", g_auto_off_min);
-    // 蓝牙档 light sleep 开关（1=开）。**这是配置值，不是"当前是否在休眠"**：
-    // WiFi/OFF 档本身永不开 light sleep，当前休眠状态要看 /diag 的 SLEEP 占比。
-    cJSON_AddNumberToObject(dualkey, "light_sleep_enabled", g_light_sleep_cfg);
 
     // 自定义映射状态
     cJSON_AddBoolToObject(dualkey, "custom_mapping_enabled", btn_progress_is_custom_mapping_enabled());
@@ -2760,39 +2734,6 @@ static void auto_off_config_save(uint16_t minutes)
     ESP_LOGI(TAG, "自动关机超时已保存: %u 分钟 (0=关闭)", (unsigned)minutes);
 }
 
-/*!< light sleep 开关的 NVS 读写。与自动关机共用 power_cfg 命名空间，键名不同。
- *   存 u8（0/1）而不是 bool：本项目里 bool 的 NVS 存法各家不一（有的存 u8、
- *   有的存 string "true"），统一用 u8 最不容易踩类型不匹配的坑。 */
-static void light_sleep_config_load(void)
-{
-    nvs_handle_t h = 0;
-    if (nvs_open(AUTO_OFF_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
-        ESP_LOGI(TAG, "light sleep: 无存档，用默认 %d (1=开)", LIGHT_SLEEP_DEFAULT);
-        return;
-    }
-    uint8_t v = LIGHT_SLEEP_DEFAULT;
-    if (nvs_get_u8(h, LIGHT_SLEEP_NVS_KEY, &v) == ESP_OK && v <= 1) {
-        g_light_sleep_cfg = v;
-    }
-    nvs_close(h);
-    ESP_LOGI(TAG, "light sleep(蓝牙档): %s", g_light_sleep_cfg ? "开启" : "关闭");
-}
-
-static void light_sleep_config_save(uint8_t enabled)
-{
-    g_light_sleep_cfg = enabled ? 1 : 0;
-
-    nvs_handle_t h = 0;
-    if (nvs_open(AUTO_OFF_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
-        ESP_LOGW(TAG, "light sleep: NVS 打开失败，本次仅内存生效");
-        return;
-    }
-    nvs_set_u8(h, LIGHT_SLEEP_NVS_KEY, g_light_sleep_cfg);
-    nvs_commit(h);
-    nvs_close(h);
-    ESP_LOGI(TAG, "light sleep(蓝牙档)已保存: %s (下次开机生效)", g_light_sleep_cfg ? "开启" : "关闭");
-}
-
 /*!< ---- 自动关机的灯效：睡前"呼吸 3 次" / 唤醒"呼吸 1 次" ----
  *
  *   2026-09-15 用户两次反馈后定下的观感：
@@ -3656,10 +3597,6 @@ void app_main(void)
      *   而且这样以后要在别的档位启用不需要再动这里。 */
     auto_off_config_load();
 
-    /*!< 蓝牙档 light sleep 开关（A/B 用），同一命名空间、同样三档都读；
-     *   必须在下面 ble_only_mode 分支之前完成，否则那份读到的是编译期默认值。 */
-    light_sleep_config_load();
-
     /*!< 唤醒原因取证：区分"冷启动"与"从自动关机深睡被唤醒"。
      *   蓝牙档没有控制台，NVS 是唯一的事后通道；所以这里**无条件**落一行 BOOTRAW ——
      *   上一轮只留下 reason=8，看不出唤醒源到底是谁（WAKE1 从未落盘），
@@ -3933,26 +3870,20 @@ void app_main(void)
      *   只对蓝牙档开启：WiFi 档要保证网页/WebSocket 实时响应，而且读诊断数据也在
      *   那一档，不适合引入休眠。 */
     if (ble_only_mode) {
-        if (g_light_sleep_cfg) {
-            const esp_err_t gpio_wk = esp_sleep_enable_gpio_wakeup();
-            esp_pm_config_t pm_cfg  = {
-                .max_freq_mhz       = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-                .min_freq_mhz       = CONFIG_XTAL_FREQ, /*!< S3 最低档即晶振 40MHz */
-                .light_sleep_enable = true,
-            };
-            const esp_err_t pm_ret = esp_pm_configure(&pm_cfg);
-            g_light_sleep_on       = (pm_ret == ESP_OK);
-            ESP_LOGI(TAG, "BLE-only: auto light sleep %s (pm=%s gpio_wakeup=%s, DFS %d/%d MHz)",
-                     (pm_ret == ESP_OK) ? "ENABLED" : "FAILED", esp_err_to_name(pm_ret), esp_err_to_name(gpio_wk),
-                     pm_cfg.max_freq_mhz, pm_cfg.min_freq_mhz);
-        } else {
-            /*!< A/B：用户在网页把"蓝牙档 light sleep"关掉了。
-             *   刻意**不调用** esp_pm_configure() —— 让 DFS 保持 IDF 自动配置的默认档，
-             *   只把 light sleep 这条路彻底摘掉，这样两组之间唯一的变量就是"休眠"。
-             *   g_light_sleep_on 保持 false ⇒ update_device_status() 会采信原始拨码
-             *   读数（此时读数本来就可信），语义正确。 */
-            ESP_LOGW(TAG, "BLE-only: auto light sleep DISABLED by config (网页开关)");
-        }
+        /*!< 恒开（2026-09-16 起不再有网页开关，理由见文件头部那段注释）。
+         *   这里的显式配置与 IDF 的自动 DFS 配置（esp_pm/pm_impl.c 的
+         *   CONFIG_PM_DFS_INIT_AUTO 分支）取值一致，只多一个 light_sleep_enable。 */
+        const esp_err_t gpio_wk = esp_sleep_enable_gpio_wakeup();
+        esp_pm_config_t pm_cfg  = {
+            .max_freq_mhz       = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+            .min_freq_mhz       = CONFIG_XTAL_FREQ, /*!< S3 最低档即晶振 40MHz */
+            .light_sleep_enable = true,
+        };
+        const esp_err_t pm_ret = esp_pm_configure(&pm_cfg);
+        g_light_sleep_on       = (pm_ret == ESP_OK);
+        ESP_LOGI(TAG, "BLE-only: auto light sleep %s (pm=%s gpio_wakeup=%s, DFS %d/%d MHz)",
+                 (pm_ret == ESP_OK) ? "ENABLED" : "FAILED", esp_err_to_name(pm_ret), esp_err_to_name(gpio_wk),
+                 pm_cfg.max_freq_mhz, pm_cfg.min_freq_mhz);
 
         /*!< 按键活跃期"禁睡锁"的创建（详细说明见 keyboard_cb 上方那段注释）。
          *   放在这一档里是因为延迟症状只在蓝牙档出现；其它档 light sleep 本就没开，
