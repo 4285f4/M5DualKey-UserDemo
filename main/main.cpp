@@ -113,6 +113,14 @@ volatile uint32_t g_key_pin_changes = 0;
 volatile uint32_t g_key_cb_count    = 0;
 volatile uint32_t g_key_flash_count = 0;
 
+/*!< 灯带刷新（SPI）失败次数 —— "唤醒后有没有灯效"的第四层判据。
+ *   前三层（pin / cb / flash）只能证明"软件走到位了"；灯带本身若在
+ *   light sleep 之后失效，三者照样全增。本计数把这一层单独量出来：
+ *     g_key_flash_count 增 + 本值不增 ⇒ 触发与硬件都正常（该看见灯）
+ *     g_key_flash_count 增 + 本值也增 ⇒ 触发正常、**灯带写入失败** ⇒ 硬件/驱动侧
+ *   与 g_key_pin_changes 同一套路：纯 RAM 计数，掉电即失，本来就不需要跨重启。 */
+volatile uint32_t g_led_rf_fail = 0;
+
 /*!< ========================= 自动关机（仅蓝牙档） =========================
  *
  *   用户诉求：蓝牙档长时间没有主机连接时，不能一直广播耗电。
@@ -2221,6 +2229,13 @@ static void device_status_task(void *pvParameters)
                          (unsigned)lat.usb_send_ms_max, (unsigned)lat.tap_hold_ms_last,
                          (unsigned)lat.tap_hold_ms_max, (unsigned)lat.tap_count, (unsigned)lat.long_fire_ms_last,
                          (unsigned)lat.cb_down_count, (unsigned)lat.cb_gap_ms_max);
+                /*!< 灯效四层计数（2026-09-16 加）：pin（引脚层）→ cb（驱动回调层）
+                 *   → flash（灯效触发层）→ rffail（灯带写入层）。"唤醒后无灯效"
+                 *   到底断在哪一层，这一行直接给出答案，不必再靠猜。
+                 *   lsleep = 蓝牙档 light sleep 是否配置成功（非"是否真睡"）。 */
+                ESP_LOGW(TAG, "BATLED pin=%u cb=%u flash=%u rffail=%u lsleep=%d",
+                         (unsigned)g_key_pin_changes, (unsigned)g_key_cb_count, (unsigned)g_key_flash_count,
+                         (unsigned)g_led_rf_fail, (int)g_light_sleep_on);
                 char *rt = diag_rt_report();
                 if (rt != NULL) {
                     char *save = NULL;
@@ -2379,10 +2394,46 @@ static void key_flash_trigger(int input_index)
     if (!key_led_effect_enabled()) {
         return;
     }
-    s_key_flash_start_us[KEY_FLASH_LED_OF_INPUT(input_index)] = esp_timer_get_time();
+    const int led = KEY_FLASH_LED_OF_INPUT(input_index);
+    s_key_flash_start_us[led] = esp_timer_get_time();
 
-    /*!< 立刻唤醒渲染任务：空闲周期是 200ms，若只等它自己醒来，第一次点亮最多晚 200ms
-     *   —— 那正是"按下去灯半天才亮"的观感来源。 */
+    /*!< ── 【2026-09-16 修复】按下即刻同步点亮一帧，不再"只通知渲染任务" ──────
+     *   现象：蓝牙档 light sleep 真正生效后（拔线），静置再按键**没有灯效**。
+     *
+     *   根因：脉冲窗口 KEY_FLASH_DURATION_MS 是 1s 的**绝对时间**，而点亮动作
+     *   完全外包给了 light_progress_task。这个任务在 light sleep 下能否、多快
+     *   被调度，取决于"唤醒之后"的时序 —— 一旦"按下 → 渲染"之间夹进一次休眠
+     *   往返（或渲染被推迟到下一个心跳），1s 窗口就可能已经走完：
+     *       key_flash_render() 里 `t >= span → continue` 直接跳过，
+     *       key_flash_any_active() 也返回 false ⇒ 整个脉冲被静默丢弃。
+     *   于是"按下去完全没有反馈" —— 而用户同时主观感觉"按键延迟严重"，
+     *   两者其实可能互为因果（没有即时视觉反馈，主观延迟被放大）。
+     *
+     *   修法：触发点自己写一帧峰值像素并 refresh（与 key_flash_render 首帧
+     *   同值），保证"按下即有反馈"；随后的线性淡出仍由渲染任务接管。
+     *   这一步只多一次 SPI 写入，代价可忽略，且不改变原有淡出曲线。
+     *
+     *   ⚠️ 锁只包住写像素，绝不跨 vTaskDelay（本项目铁律）。 */
+    bool lit = false;
+    if (led_strip != NULL) {
+        light_progress_lock();
+        led_strip_set_pixel(led_strip, led, 0, 0, KEY_FLASH_PEAK_LEVEL);
+        const esp_err_t rf = led_strip_refresh(led_strip);
+        light_progress_unlock();
+        if (rf == ESP_OK) {
+            lit = true;
+        } else {
+            g_led_rf_fail++;
+        }
+    }
+    if (lit && !s_key_flash_overlay) {
+        /*!< 先把渲染接管权拿到手，再唤醒渲染任务 —— 顺序反过来的话，渲染任务
+         *   可能先跑到 light_progress() 把这一帧刷掉。 */
+        s_key_flash_overlay = true;
+        light_progress_set_flash_overlay(true);
+    }
+
+    /*!< 立刻唤醒渲染任务：空闲周期是 200ms，若只等它自己醒来，淡出会一整拍不动。 */
     if (light_progress_task_handle != NULL) {
         xTaskNotifyGive(light_progress_task_handle);
     }
@@ -2425,7 +2476,12 @@ static void key_flash_render(void)
             wrote = true;
         }
         if (wrote) {
-            led_strip_refresh(led_strip);
+            /*!< 取证：灯带写入失败是一条**独立**的病因（区别于"脉冲被丢掉"）。
+             *   蓝牙档 light sleep 唤醒后若 SPI 灯带失效，本计数会持续增长，
+             *   而 g_key_flash_count 照旧增加 ⇒ 一眼可分。 */
+            if (led_strip_refresh(led_strip) != ESP_OK) {
+                g_led_rf_fail++;
+            }
         }
     }
     light_progress_unlock();
@@ -2477,8 +2533,21 @@ static void key_flash_render(void)
  *   整条链路）。静置时照旧休眠 ⇒ 对实测 ~3.3mA 的静置电流几乎无影响。
  *
  *   ⚠️ 只能在任务上下文调用（keyboard_cb 跑在 kbd_task 里；esp_pm_lock_acquire
- *      内部可能走互斥量/IPC，不能在 ISR 里调用）。 */
-#define KBD_KEEPAWAKE_TAIL_MS 1500
+ *      内部可能走互斥量/IPC，不能在 ISR 里调用）。
+ *
+ *   🔴 2026-09-16 尾巴由 1500ms 加长到 5000ms。
+ *   旧值只够覆盖"一次按键 + 1s 淡出"，而用户的实际用法是**连续翻页** ——
+ *   两次翻页的间隔常在 1~3s，于是每翻一页都要重新经历一次
+ *   "醒来 → 拿锁 → 上报"的全程，每次都吃一遍唤醒代价（用户感受就是
+ *   "夜里放着，早上按第一下特别迟钝"，甚至每次停顿稍久一点就迟钝）。
+ *   5s 窗口把"连续翻页"整段覆盖住：只要还在用，就不睡；停手 5s 后照旧休眠。
+ *   功耗代价可忽略（停手后多醒 5s ≈ 45mA × 5s ≈ 0.06mAh，相对 350mAh 电池
+ *   在 3.3mA 下的 4 天续航是万分之几）。
+ *
+ *   ⚠️ 唤醒**本身**的代价（CPU 电源域恢复 + BLE 连接事件对齐）发生在本函数
+ *   被调用**之前**，任何"按键之后"的锁都覆盖不到它 —— 那是 light sleep 与
+ *   低延迟输入的固有取舍，只能靠"使用时别睡"（就是这个尾巴）来回避。 */
+#define KBD_KEEPAWAKE_TAIL_MS 5000
 
 static esp_pm_lock_handle_t s_kbd_pm_lock       = NULL;
 static esp_timer_handle_t   s_kbd_pm_timer      = NULL;
