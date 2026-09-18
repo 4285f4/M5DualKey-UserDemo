@@ -49,8 +49,13 @@ target_link_libraries(${tusb_lib} PRIVATE ${COMPONENT_LIB})
 #   而本工程从不调用 usb_serial_jtag_driver_install()，行为不可控。
 #
 #   ⚠️ 该库在 `idf_component_register(...)` 之后才被 IDF 组件管理器对主组件可见，
-#   所以获取 `__idf_esp_driver_usb_serial_jtag` 目标必须放在注册语句之后
-#   （同上 `espressif__tinyusb` 的用法）。
-idf_component_get_property(usj_lib __idf_esp_driver_usb_serial_jtag COMPONENT_LIB)
+#   所以获取组件属性必须放在注册语句之后（同上 `espressif__tinyusb` 的用法）。
+#
+#   ⚠️ 2026-09-18 更正：这里必须传**组件名** `esp_driver_usb_serial_jtag`，不能传
+#   链接目标名 `__idf_esp_driver_usb_serial_jtag`。IDF 的 `__component_get_target()`
+#   只认两种写法：① 别名（`idf::<name>`，内部拼成 3 个下划线）；② 与
+#   `COMPONENT_NAME` 属性逐字相等的字符串（即裸组件名）。传目标名会让两种匹配
+#   全部落空 ⇒ `Failed to resolve component '...'` + CMake 配置期直接 FATAL。
+idf_component_get_property(usj_lib esp_driver_usb_serial_jtag COMPONENT_LIB)
 target_link_libraries(${COMPONENT_LIB} INTERFACE
     "-Wl,--whole-archive" "${usj_lib}" "-Wl,--no-whole-archive")
