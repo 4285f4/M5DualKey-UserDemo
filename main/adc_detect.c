@@ -67,6 +67,46 @@ typedef struct {
 // ADC句柄
 static adc_oneshot_unit_handle_t adc_handle = NULL;
 
+/*!< ── ADC 采样期间的 light sleep 禁用锁（2026-09-18）────────────────────────
+ *
+ *   问题：light sleep 会切断数字外设的电源域，`adc_oneshot_read()` 在休眠期间
+ *   返回无意义的值。本工程已经为拨码通道栽过一次（REFERENCE §J：休眠下读数从
+ *   ~3026 塌到 ~1275，蓝牙档被读成中间档 ⇒ 跨档重启死循环），为此专门写了
+ *   `dip_switch_verify_crossing()` 做"关休眠 + 重建通道 + 复读"。
+ *
+ *   但那把补丁**只打在拨码的两路通道上**，电池/充电/VBUS 这三路一直是裸奔的：
+ *   `adc_read_average()` 是 64 次采样、每次 `vTaskDelay(1)`，而 tick=1000Hz，
+ *   也就是每个样本点都让出 CPU 一次 —— 蓝牙档开了 light sleep，这些间隙正好
+ *   被 tickless idle 用来入睡，醒来后 ADC 数字接口已经失效 ⇒ 读数系统性虚低。
+ *
+ *   实测后果：WiFi 档（无休眠）读 4.159V/87%，蓝牙档（有休眠）读出的值低到
+ *   落进琥珀段（<60%）。同一块电池、同一份固件，只因为档位不同就变了个颜色。
+ *
+ *   ⇒ 采样全程持 `ESP_PM_NO_LIGHT_SLEEP`。
+ *     代价说明：**插线时这把锁是空操作** —— USB-Serial-JTAG 连接监控一旦检测到
+ *     主机，本身就持有 `ESP_PM_NO_LIGHT_SLEEP`（REFERENCE §0），light sleep
+ *     已经 100% 被禁。所以"插线态高频采样"不影响功耗；真正有成本的是"未插线态
+ *     的插线探测"，那条路走 `adc_vbus_present()`，只读一路、样本数也降到 16。 */
+static esp_pm_lock_handle_t s_adc_pm_lock = NULL;
+
+static void adc_pm_lock_acquire(void)
+{
+#if CONFIG_PM_ENABLE
+    if (s_adc_pm_lock != NULL) {
+        esp_pm_lock_acquire(s_adc_pm_lock);
+    }
+#endif
+}
+
+static void adc_pm_lock_release(void)
+{
+#if CONFIG_PM_ENABLE
+    if (s_adc_pm_lock != NULL) {
+        esp_pm_lock_release(s_adc_pm_lock);
+    }
+#endif
+}
+
 // 全局变量，供其他模块访问
 float g_battery_voltage  = 3.7f;
 int g_charging_status    = 0;
@@ -126,6 +166,16 @@ static esp_err_t init_adc(adc_oneshot_unit_handle_t handle)
         return ret;
     }
 
+#if CONFIG_PM_ENABLE
+    /*!< 幂等：只建一次。允许在 esp_pm_configure() 之前创建。 */
+    if (s_adc_pm_lock == NULL) {
+        const esp_err_t lk = esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "adcsample", &s_adc_pm_lock);
+        if (lk != ESP_OK) {
+            ESP_LOGW(TAG, "ADC PM lock create failed: %s (读数可能被休眠污染)", esp_err_to_name(lk));
+        }
+    }
+#endif
+
     ESP_LOGI(TAG, "ADC initialized successfully");
     return ESP_OK;
 }
@@ -172,10 +222,36 @@ static const char *get_charge_status_string(float chrg_voltage_mv)
     }
 }
 
+/*!< 轻量"插线探测"：只读 VBUS 一路、样本数 16。
+ *
+ *   用途：未插线态下 `power_indicator_task` 必须先"发现插线"才能点亮电量指示，
+ *   而这条探测是蓝牙档**未插线时唯一还在跑的 ADC 采样** ⇒ 它的开销直接落在静置
+ *   续航上。完整采样是 3 路 × 64 样本 ≈ 192ms（tick=1000Hz，每样本 1ms）；这里
+ *   1 路 × 16 样本 ≈ 16ms，约 1/12。
+ *   VBUS 只需要跨过 4.0V 这个门限、结果就是布尔量，噪声容忍度高，16 点足够。
+ *
+ *   同样持 NO_LIGHT_SLEEP 锁 —— 读数不可信的话，探测本身就没有意义。 */
+bool adc_vbus_present(void)
+{
+    if (adc_handle == NULL) {
+        return false;
+    }
+
+    adc_pm_lock_acquire();
+    const int raw       = adc_read_average(ADC_VBUS_CHANNEL, 16);
+    const float voltage = adc_raw_to_voltage(raw) * VOLTAGE_DIVIDER_RATIO_VBUS / 1000.0f;
+    adc_pm_lock_release();
+
+    return voltage > 4.0f;
+}
+
 // 执行ADC检测
 static adc_result_t perform_adc_detection(void)
 {
     adc_result_t result = {0};
+
+    /*!< 采样全程禁 light sleep —— 见 s_adc_pm_lock 的长注释。 */
+    adc_pm_lock_acquire();
 
     // 读取电池电压
     int bat_raw            = adc_read_average(ADC_BAT_CHANNEL, ADC_SAMPLE_COUNT);
@@ -194,7 +270,31 @@ static adc_result_t perform_adc_detection(void)
     result.chrg_voltage  = adc_raw_to_voltage(chrg_raw) / 1000.0f;  // 转换为V
     result.charge_status = get_charge_status_string(result.chrg_voltage * 1000);
 
+    adc_pm_lock_release();
+
     return result;
+}
+
+/*!< ── 电量等级色（全工程唯一实现，2026-09-18 从 main.cpp 迁入）─────────────
+ *
+ *   之所以要收敛成一份：这套"低亮度常亮表示电量等级"的语义原本只在 main.cpp 的
+ *   `power_indicator_task` 里，而 `update_status_leds()`（开机自检 / 长按 4~7s）
+ *   用的是厂方遗留的另一套 —— LED0 显示电池**电压**色、LED1 显示**充电状态**色。
+ *   两套并存的结果是开机瞬间两颗灯语义不同、颜色不一样，用户会读成"灯效错乱"
+ *   （实机已反馈过）。现在两边共用这一个函数，三档 + 全路径语义统一。
+ *
+ *   亮度刻意压到 ~10%（POWER_LED_BRIGHTNESS=26）：边充边用时不刺眼。
+ *   绿色通道人眼更敏感，故取值更低以保持观感一致。 */
+#define POWER_LED_BRIGHTNESS 26
+
+uint32_t power_indicator_color(int percentage)
+{
+    if (percentage < 20) {
+        return (uint32_t)POWER_LED_BRIGHTNESS << 16;  // 红
+    } else if (percentage < 60) {
+        return ((uint32_t)POWER_LED_BRIGHTNESS << 16) | ((uint32_t)(POWER_LED_BRIGHTNESS / 2) << 8);  // 琥珀
+    }
+    return (uint32_t)(POWER_LED_BRIGHTNESS * 3 / 4) << 8;  // 绿
 }
 
 // LED状态指示
@@ -204,27 +304,23 @@ static void update_status_leds(led_strip_handle_t led_strip, const adc_result_t 
         return;
     }
 
+    /*!< 与 power_indicator_task 完全相同的语义：两颗灯**同色**常亮表示电量等级。
+     *
+     *   充满 → 两颗都熄灭。判定必须带 `usb_connected` 校验：TP4057 在"未充电"与
+     *   "充满"两种状态下 CHRG 引脚都可能落在电压表的同一侧（REFERENCE §P.3），
+     *   不校验会把"没插线"读成"充满了"。
+     *
+     *   ⚠️ g_battery_percentage 由调用方 update_power_status() 在本函数之前更新。 */
+    const bool full      = result->usb_connected && (strcmp(result->charge_status, "Fully Charged") == 0);
+    const uint32_t color = full ? 0u : power_indicator_color(g_battery_percentage);
+
+    const uint8_t R = (color >> 16) & 0xFF;
+    const uint8_t G = (color >> 8) & 0xFF;
+    const uint8_t B = color & 0xFF;
+
     if (xSemaphoreTake(led_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        // LED0: 电池状态指示
-        if (result->battery_low) {
-            led_strip_set_pixel(led_strip, 0, 255, 0, 0);  // 红色 - 低电量
-        } else if (result->battery_voltage > 4.0f) {
-            led_strip_set_pixel(led_strip, 0, 0, 255, 0);  // 绿色 - 电量充足
-        } else {
-            led_strip_set_pixel(led_strip, 0, 255, 255, 0);  // 黄色 - 电量中等
-        }
-
-        // LED1: 充电状态指示
-        if (strcmp(result->charge_status, "Charging") == 0) {
-            led_strip_set_pixel(led_strip, 1, 0, 0, 255);  // 蓝色 - 充电中
-        } else if (strcmp(result->charge_status, "Fully Charged") == 0) {
-            led_strip_set_pixel(led_strip, 1, 0, 255, 0);  // 绿色 - 充满电
-        } else if (result->usb_connected) {
-            led_strip_set_pixel(led_strip, 1, 255, 0, 255);  // 紫色 - USB连接但不充电
-        } else {
-            led_strip_set_pixel(led_strip, 1, 0, 0, 0);  // 关闭 - 无USB连接
-        }
-
+        led_strip_set_pixel(led_strip, 0, R, G, B);
+        led_strip_set_pixel(led_strip, 1, R, G, B);
         led_strip_refresh(led_strip);
         xSemaphoreGive(led_mutex);
     }
@@ -304,16 +400,11 @@ void test_adc_detection(led_strip_handle_t led_strip, adc_oneshot_unit_handle_t 
     ESP_LOGI(TAG, "- Fully Charged: %.1fV-%.1fV", CHRG_CHARGED / 1000.0f, CHRG_NOT_CHARGING / 1000.0f);
     ESP_LOGI(TAG, "- Charging: %.1fV-%.1fV", CHRG_CHARGING / 1000.0f, CHRG_CHARGED / 1000.0f);
 
-    ESP_LOGI(TAG, "LED Status Indicators:");
-    ESP_LOGI(TAG, "  LED0 - Battery Status:");
-    ESP_LOGI(TAG, "    Red: Low battery (<3.2V)");
-    ESP_LOGI(TAG, "    Yellow: Medium battery (3.2V-4.0V)");
-    ESP_LOGI(TAG, "    Green: High battery (>4.0V)");
-    ESP_LOGI(TAG, "  LED1 - Charge Status:");
-    ESP_LOGI(TAG, "    Blue: Charging");
-    ESP_LOGI(TAG, "    Green: Fully charged");
-    ESP_LOGI(TAG, "    Purple: USB connected, not charging");
-    ESP_LOGI(TAG, "    Off: USB disconnected");
+    ESP_LOGI(TAG, "LED Status Indicators (both keys share one colour):");
+    ESP_LOGI(TAG, "    Red: battery <20%%");
+    ESP_LOGI(TAG, "    Amber: battery 20%%-59%%");
+    ESP_LOGI(TAG, "    Green: battery >=60%%");
+    ESP_LOGI(TAG, "    Off: fully charged while USB connected");
 
     // 创建ADC检测任务
     // xTaskCreate(adc_detection_task, "adc_detection_task", 4096, led_strip, 5, NULL);
@@ -358,13 +449,16 @@ void update_power_status(led_strip_handle_t led_strip)
     // 更新全局变量
     g_battery_voltage = result.battery_voltage;
 
-    // 判定充电状态: 0=未充电, 1=充电中, 2=充满
-    g_charging_status = (strcmp(result.charge_status, "Charging") == 0)        ? 1
-                        : (strcmp(result.charge_status, "Fully Charged") == 0) ? 2
-                                                                               : 0;
-    g_usb_voltage     = result.vbus_voltage;
-
+    g_usb_voltage   = result.vbus_voltage;
     g_usb_connected = result.usb_connected;
+
+    /*!< 判定充电状态: 0=未充电, 1=充电中, 2=充满。
+     *   ⚠️ "充满"必须同时满足 USB 在位 —— TP4057 在"未插线"时 CHRG 是高阻态，
+     *   电压会落在与"充满"相同的区间里（REFERENCE §P.3），不校验就会被读成
+     *   "充满了"并进一步把电量硬拉成 100%。 */
+    const bool chrg_charging = (strcmp(result.charge_status, "Charging") == 0);
+    const bool chrg_full     = (strcmp(result.charge_status, "Fully Charged") == 0) && result.usb_connected;
+    g_charging_status        = chrg_charging ? 1 : (chrg_full ? 2 : 0);
 
     // --- 优化后的电量计算逻辑开始 ---
     if (g_charging_status == 2) {

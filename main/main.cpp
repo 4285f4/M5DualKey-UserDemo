@@ -2153,8 +2153,10 @@ static void websocket_task(void *pvParameters)
         update_device_status();
         websocket_send_status();
 
-        // 更新电源状态
-        update_power_status(NULL);
+        /*!< 电量/充电状态的周期采样**不在这里做** —— 已统一交给 power_indicator_task
+         *   （三档都在跑的那一个）。这里原来每 ≤500ms 采一次，既比蓝牙档快 10 倍，
+         *   又让"插线时网页侧刷新"和"电池档电量刷新"走了两条不同的代码路径，
+         *   正是三档表现不一致的来源之一。 */
     }
 }
 
@@ -2201,7 +2203,6 @@ static void late_flush_task(void *pvParameters)
 
 static void device_status_task(void *pvParameters)
 {
-    int tick = 0;
     /*!< 诊断用的"上一次值"（仅本任务 = 仅蓝牙档）。
      *   2026-09-15 现场："电脑蓝牙扫描几次才连上，连上没多久又断开，约 3s 一个循环"
      *   + "按键单击无灯效、不触发映射"，而事件日志里却既没有重启也没有第二次深睡 ——
@@ -2226,12 +2227,13 @@ static void device_status_task(void *pvParameters)
 
     while (1) {
         update_device_status();
-        // 电量变化缓慢, 降低 ADC 采样频率(单次采样约 200ms)以省电；
-        // 5s 一次是为了让"插入 USB"能在数秒内触发充电电量指示
-        if (tick % 5 == 0) {
-            update_power_status(NULL);
-        }
-        tick++;
+        /*!< 电量/充电状态的周期采样**不在这里做** —— 已统一交给 power_indicator_task
+         *   （未插线每 2s 轻量探 VBUS，插线每 1s 完整采样，三档同一节奏）。
+         *
+         *   原来这里每 5s 采一次，而蓝牙档是**唯一**开着 light sleep 的档：
+         *   adc_read_average() 的 64 个样本点之间各有 1ms 让出 CPU，tickless idle
+         *   正好用这些间隙入睡，醒来后 ADC 数字接口已失效 ⇒ 读数系统性虚低。
+         *   同一块电池因此被判成琥珀（<60%），而 WiFi 档（无休眠）判成绿。 */
         /*!< ── 拔线期时序取证（2026-09-16 加）───────────────────────────────
          *   取证上的死结：控制台走 USB-Serial-JTAG，**只有插着线才读得到**；而
          *   light sleep 只在拔线时生效（插线时 USJ 持 NO_LIGHT_SLEEP 锁）⇒
@@ -2795,59 +2797,123 @@ static void light_progress_task(void *pvParameters)
     }
 }
 
-/*!< 充电指示亮度：刻意压到 ~10%，边充边用时不刺眼 */
-#define POWER_LED_BRIGHTNESS 26
-
-/*!< 电量等级 -> 低亮度颜色：红 <20%，琥珀 <60%，绿 >=60%。
- *   绿色通道人眼更敏感，故用更低的值保持观感一致。 */
-static uint32_t power_indicator_color(int percentage)
-{
-    if (percentage < 20) {
-        return (uint32_t)POWER_LED_BRIGHTNESS << 16;  // 红
-    } else if (percentage < 60) {
-        return ((uint32_t)POWER_LED_BRIGHTNESS << 16) | ((uint32_t)(POWER_LED_BRIGHTNESS / 2) << 8);  // 琥珀
-    }
-    return (uint32_t)(POWER_LED_BRIGHTNESS * 3 / 4) << 8;  // 绿
-}
-
-/*!< 充电电量指示：USB 连接期间以低亮度常亮显示电量等级。
+/*!< ── 充电电量指示（三档统一，2026-09-18 重写）─────────────────────────────
  *
- *   rgb_matrix 每 10ms 就会重绘整条灯带，直接写像素会被立刻覆盖，因此必须用 overlay
+ *   统一前的实际行为是"同一份代码、三个档位三套时序"：
+ *     WiFi 档：websocket_task 每 ≤500ms 调一次 update_power_status(NULL)
+ *     蓝牙档：device_status_task 每 5s 调一次（且 ADC 读数被 light sleep 污染）
+ *     OFF 档：没有任何周期调用者 ⇒ 电量值永远停在"插线开机那一刻"
+ *   于是同一根线插下去，三档的刷新快慢、最终颜色各不相同，OFF 档还完全不响应
+ *   插拔线。
+ *
+ *   现在改成：**本任务成为全工程唯一的周期采样点**，自己调 update_power_status()，
+ *   不再依赖档位专属任务（websocket_task / device_status_task 里的那两个调用点
+ *   已随之删除）。三档走同一段代码、同一个节奏。
+ *
+ *   采样节奏按插线与否自适应：
+ *     - 未插线：每 PWR_PROBE_IDLE_MS 用 adc_vbus_present() 探一次 VBUS。这条探测
+ *       是蓝牙档静置时唯一还在跑的 ADC 采样，成本直接落在续航上，所以只读一路、
+ *       16 样本（≈16ms），而不是完整采样的 3 路 × 64 样本（≈192ms）。
+ *     - 插线：每 PWR_SAMPLE_ACTIVE_MS 做一次完整采样。此时 USB-Serial-JTAG 连接
+ *       监控本身持有 ESP_PM_NO_LIGHT_SLEEP，light sleep 已被禁 ⇒ 零额外代价。
+ *
+ *   rgb_matrix 会周期重绘整条灯带，直接写像素会被立刻覆盖，因此插线期间用 overlay
  *   接管渲染；断开 USB 后释放 overlay 并恢复按键显示（静态色或按键灯效）。
+ *
+ *   充满（TP4057 报 Fully Charged 且 USB 在位）：绿色闪 PWR_FULL_BLINK 下作为
+ *   一次性事件提示，随后两灯常灭。——"熄灭"是最省电、最不打扰的"已充满"信号，
+ *   而绿色闪烁负责把"刚充满"与"一直就没亮"区分开来。想改成纯熄灭（不闪），
+ *   把 PWR_FULL_BLINK 置 0 即可。
  */
+#define PWR_PROBE_IDLE_MS    2000
+#define PWR_SAMPLE_ACTIVE_MS 1000
+#define PWR_FULL_BLINK       2
+
 static void power_indicator_task(void *pvParameters)
 {
     bool overlay_on = false;
+    bool full_done  = false; /*!< 本轮插线是否已播过"充满"提示 */
 
     while (1) {
-        if (g_usb_connected) {
+        /*!< 未插线：只做轻量 VBUS 探测，探不到就继续等，不碰完整采样。
+         *   注意这里读的是全局 g_usb_connected（上一轮完整采样的结果），
+         *   所以"拔线"会在插线分支的下一轮完整采样里被发现。 */
+        if (!g_usb_connected && !adc_vbus_present()) {
+            vTaskDelay(pdMS_TO_TICKS(PWR_PROBE_IDLE_MS));
+            continue;
+        }
+
+        /*!< 唯一的完整采样点：三档一致，且 OFF 档也能实时响应插拔线。
+         *   传 NULL ⇒ 不画灯（灯由下面的 overlay 逻辑负责），只更新全局量。 */
+        update_power_status(NULL);
+
+        const bool usb_now = g_usb_connected;
+        /*!< g_charging_status == 2 已在 update_power_status() 内校验过 USB 在位 */
+        const bool full_now = (g_charging_status == 2);
+
+        if (usb_now) {
             if (!overlay_on) {
                 light_progress_set_charge_overlay(true);
                 overlay_on = true;
+                full_done  = false;
             }
+
             /*!< 按键灯效脉冲期间让位：它正在那两颗灯上画淡出，这里若照旧写电量色会把
-             *   淡出画面刷回去（表现为按键反馈被"吃掉"、或闪烁）。1s 后本任务会再刷一次，
-             *   脉冲最长为 1s，所以最多漏刷一轮，观感无影响。 */
+             *   淡出画面刷回去（表现为按键反馈被"吃掉"、或闪烁）。1s 后本任务会再刷
+             *   一次，脉冲最长为 1s，所以最多漏刷一轮，观感无影响。 */
             if (!key_flash_any_active()) {
-                const uint32_t color = power_indicator_color(g_battery_percentage);
-                light_progress_lock();
-                set_key_rgb_color_locked(0, color, false);  // 右键 LED index 0
-                set_key_rgb_color_locked(1, color, true);   // 左键 LED index 1（同帧收尾）
-                light_progress_unlock();
+                if (full_now) {
+                    if (!full_done) {
+                        full_done = true;
+                        /*!< 用满亮度：这是短促的"事件"提示，不是常亮背景灯。 */
+                        for (int i = 0; i < PWR_FULL_BLINK; i++) {
+                            light_progress_lock();
+                            set_key_rgb_color_locked(0, 0x00FF00u, false);
+                            set_key_rgb_color_locked(1, 0x00FF00u, true);
+                            light_progress_unlock();
+                            vTaskDelay(pdMS_TO_TICKS(200));
+
+                            light_progress_lock();
+                            set_key_rgb_color_locked(0, 0u, false);
+                            set_key_rgb_color_locked(1, 0u, true);
+                            light_progress_unlock();
+                            vTaskDelay(pdMS_TO_TICKS(200));
+                        }
+                    }
+                    /*!< 充满后常灭 */
+                    light_progress_lock();
+                    set_key_rgb_color_locked(0, 0u, false);
+                    set_key_rgb_color_locked(1, 0u, true);
+                    light_progress_unlock();
+                } else {
+                    full_done            = false;
+                    const uint32_t color = power_indicator_color(g_battery_percentage);
+                    light_progress_lock();
+                    set_key_rgb_color_locked(0, color, false);  // 右键 LED index 0
+                    set_key_rgb_color_locked(1, color, true);   // 左键 LED index 1（同帧收尾）
+                    light_progress_unlock();
+                }
             }
-            vTaskDelay(pdMS_TO_TICKS(1000));  // 常亮；每秒刷新一次电量等级
-        } else if (overlay_on) {
-            overlay_on = false;
-            // 先放开渲染，等可能的一次性清屏落地，再成对恢复按键显示
-            light_progress_set_charge_overlay(false);
-            vTaskDelay(pdMS_TO_TICKS(30));
-            refresh_key_colors_from_status();
-            vTaskDelay(pdMS_TO_TICKS(20));
-            refresh_key_colors_from_status();
+            vTaskDelay(pdMS_TO_TICKS(PWR_SAMPLE_ACTIVE_MS));
         } else {
-            /*!< 电池态空闲：只等 USB 插入事件，1s 足够（插线后最多 1s 内点亮电量指示）。
-             *   原为 300ms，在 light sleep 下等于每秒多 2.3 次无用唤醒。 */
-            vTaskDelay(pdMS_TO_TICKS(1000));
+            /*!< 刚拔线（本轮完整采样把 g_usb_connected 刷成了 false）：
+             *   释放 overlay，把灯交还给按键显示。 */
+            if (overlay_on) {
+                overlay_on = false;
+                full_done  = false;
+                // 先放开渲染，等可能的一次性清屏落地，再成对恢复按键显示
+                light_progress_set_charge_overlay(false);
+                vTaskDelay(pdMS_TO_TICKS(30));
+                refresh_key_colors_from_status();
+                vTaskDelay(pdMS_TO_TICKS(20));
+                refresh_key_colors_from_status();
+            }
+            /*!< 回到循环顶部走轻量探测分支，转入"每 2s 探一次 VBUS"的低功耗节奏。
+             *   这 200ms 是防抖用的：轻量探测是 16 样本、完整采样是 64 样本，
+             *   两者在 4.0V 门限附近可能给出不同结论 —— 没有它的话，
+             *   "探测说插着线 / 完整采样说没插"这对矛盾会让循环以 ~200ms
+             *   的周期反复做完整采样。 */
+            vTaskDelay(pdMS_TO_TICKS(200));
         }
     }
 }

@@ -30,6 +30,14 @@ void low_power_test(void);
 // 更新电源状态函数
 void update_power_status(led_strip_handle_t led_strip);
 
+// 轻量插线探测：只读 VBUS 一路（16 样本 ≈16ms），用于未插线态发现插线事件。
+// 与 update_power_status() 共用同一把 NO_LIGHT_SLEEP 锁，所以读数可信。
+bool adc_vbus_present(void);
+
+// 电量等级 -> 低亮度颜色（红 <20% / 琥珀 <60% / 绿 >=60%）。
+// 全工程唯一的"电量指示色"实现，充电指示与开机自检共用。
+uint32_t power_indicator_color(int percentage);
+
 // 全局电池状态变量
 extern float g_battery_voltage;
 extern int g_charging_status;
