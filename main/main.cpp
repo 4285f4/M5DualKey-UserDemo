@@ -394,7 +394,7 @@ static void auto_off_tick(void);
 static void power_enter_deep_sleep(void) __attribute__((noreturn));
 
 // RGB颜色控制函数声明
-static void set_key_rgb_color_locked(int key_index, uint32_t rgb_color);
+static void set_key_rgb_color_locked(int key_index, uint32_t rgb_color, bool do_refresh);
 static void apply_key_colors(uint32_t left_color, uint32_t right_color);
 static void refresh_key_colors_from_status(void);
 
@@ -2090,25 +2090,35 @@ static void update_device_status(void)
 }
 
 /*!< 直接写单颗 LED 像素。调用者须已持有 light_progress_lock()，
- *   原因见 apply_key_colors()。 */
-static void set_key_rgb_color_locked(int key_index, uint32_t rgb_color)
+ *   原因见 apply_key_colors()。
+ *
+ *   do_refresh 控制是否立刻把像素推到灯带。**成对写两颗灯时必须第一颗传 false、
+ *   第二颗传 true**：led_strip_refresh() 走 SPI 阻塞传输（spi_device_transmit），
+ *   期间会主动让出 CPU，本任务是同优先级组里最低的（prio 4），任何 prio 5 的任务
+ *   （light_progress / adc_switch / websocket / device_status）都能插进来。
+ *   若两颗各刷一次，就会出现"第一颗已亮、第二颗还没写"的空窗 —— 实测表现为
+ *   插电时两颗灯先亮一颗、约 1 秒后才亮另一颗。一次 refresh 收尾则两颗同帧，无空窗。 */
+static void set_key_rgb_color_locked(int key_index, uint32_t rgb_color, bool do_refresh)
 {
     uint8_t R = (rgb_color >> 16) & 0xFF;
     uint8_t G = (rgb_color >> 8) & 0xFF;
     uint8_t B = rgb_color & 0xFF;
     led_strip_set_pixel(led_strip, key_index, R, G, B);
-    led_strip_refresh(led_strip);
+    if (do_refresh) {
+        led_strip_refresh(led_strip);
+    }
 }
 
 /*!< 原子地写两颗灯：左键 = LED1，右键 = LED0。
  *
  *   必须成对写入 —— rgb_matrix 与这里共用同一份像素缓冲且会整条刷新，
- *   若分成两次独立写，中间可能被它的清屏冲掉一颗（表现为某个键的灯熄灭）。 */
+ *   若分成两次独立写，中间可能被它的清屏冲掉一颗（表现为某个键的灯熄灭）。
+ *   同理，整对只允许 refresh 一次（见 set_key_rgb_color_locked 注释）。 */
 static void apply_key_colors(uint32_t left_color, uint32_t right_color)
 {
     light_progress_lock();
-    set_key_rgb_color_locked(1, left_color);
-    set_key_rgb_color_locked(0, right_color);
+    set_key_rgb_color_locked(1, left_color, false);
+    set_key_rgb_color_locked(0, right_color, true);
     light_progress_unlock();
 }
 
@@ -2821,8 +2831,8 @@ static void power_indicator_task(void *pvParameters)
             if (!key_flash_any_active()) {
                 const uint32_t color = power_indicator_color(g_battery_percentage);
                 light_progress_lock();
-                set_key_rgb_color_locked(0, color);  // 右键 LED index 0
-                set_key_rgb_color_locked(1, color);  // 左键 LED index 1
+                set_key_rgb_color_locked(0, color, false);  // 右键 LED index 0
+                set_key_rgb_color_locked(1, color, true);   // 左键 LED index 1（同帧收尾）
                 light_progress_unlock();
             }
             vTaskDelay(pdMS_TO_TICKS(1000));  // 常亮；每秒刷新一次电量等级
@@ -2922,8 +2932,8 @@ static void auto_off_breath_once(int up_steps, int down_steps, int step_ms, int 
     for (int i = 1; i <= up_steps; i++) {
         const uint32_t c = scale_rgb_brightness(AUTO_OFF_BREATH_COLOR, (uint32_t)i * 255u / (uint32_t)up_steps);
         light_progress_lock();
-        set_key_rgb_color_locked(0, c);
-        set_key_rgb_color_locked(1, c);
+        set_key_rgb_color_locked(0, c, false);
+        set_key_rgb_color_locked(1, c, true);
         light_progress_unlock();
         vTaskDelay(pdMS_TO_TICKS(step_ms));
     }
@@ -2931,8 +2941,8 @@ static void auto_off_breath_once(int up_steps, int down_steps, int step_ms, int 
     for (int i = down_steps; i >= 0; i--) {
         const uint32_t c = scale_rgb_brightness(AUTO_OFF_BREATH_COLOR, (uint32_t)i * 255u / (uint32_t)down_steps);
         light_progress_lock();
-        set_key_rgb_color_locked(0, c);
-        set_key_rgb_color_locked(1, c);
+        set_key_rgb_color_locked(0, c, false);
+        set_key_rgb_color_locked(1, c, true);
         light_progress_unlock();
         vTaskDelay(pdMS_TO_TICKS(step_ms));
     }
